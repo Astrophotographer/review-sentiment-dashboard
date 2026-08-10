@@ -1,0 +1,45 @@
+{
+  "ai": {
+    "provider": "anthropic",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "sentiment_model": "claude-haiku-4-5-20251001",
+    "extract_model": "claude-sonnet-5",
+    "max_tokens": 1024,
+    "request_timeout_sec": 30
+  },
+  "dedup_policy": "skip",
+  "sentiment_grade": {
+    "strong_threshold": 0.75
+  },
+  "cleaning": {
+    "min_review_length": 5,
+    "trim_whitespace": true
+  },
+  "pagination": {
+    "default_page_size": 10
+  },
+  "visualization": {
+    "output_dir": "output",
+    "dpi": 130,
+    "font_candidates": [
+      "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+      "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+      "Malgun Gothic",
+      "AppleGothic",
+      "NanumGothic",
+      "Noto Sans CJK KR"
+    ]
+  },
+  "alert": {
+    "recent_days": 7,
+    "negative_ratio_threshold": 0.4,
+    "relative_increase_threshold": 1.3
+  },
+  "storage": {
+    "db_path": "data/reviews.db"
+  },
+  "logging": {
+    "log_dir": "logs",
+    "level": "INFO"
+  }
+}
