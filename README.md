@@ -1195,7 +1195,9 @@ $ python main.py quickstart
 ✔ 대시보드 생성 완료: output/dashboard_report.md, output/dashboard.html
 ✔ 퀵스타트 완료! output/ 폴더를 확인해보세요.
 ```
-[TEAM_ROLES.md](https://github.com/user-attachments/files/30888773/TEAM_ROLES.md)
+
+## 19. 팀 역할 배분
+
 # 팀 역할 분담 — [Project C] AI 기반 고객 리뷰 감정 분석 대시보드
 
 4명이 과제 문서의 **"2. 최종 결과물"** 5개 항목을 기준으로 파이프라인을 4구간으로 나눠
