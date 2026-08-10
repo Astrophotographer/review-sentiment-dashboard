@@ -55,8 +55,9 @@ CSV/Excel 리뷰 파일  →  [이 프로그램]  →  차트 5종 + 종합 리�
 > 자세한 내용은 [17절](#17-더-쉽게-쓰기-menuquickstart와-편의-기능)에 있습니다.
 
 ```bash
-# 0) 압축 풀고 폴더 진입
-cd review_dashboard
+# 0) 비쥬얼 스튜디오 터미널에서 바탕화면으로 이동한뒤, 깃 클론으로 주소복사해서 바탕화면에 파일 다운받기.
+cd desktop
+git clone https://github.com/krasia45/review_dashboard.git
 
 # 1) 필요한 라이브러리 설치 (requests, matplotlib, openpyxl)
 pip install -r requirements.txt
