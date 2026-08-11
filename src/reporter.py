@@ -171,9 +171,20 @@ def _all_reviews_payload(db):
     """대화형 대시보드가 브라우저에서 카테고리/제품별로 다시 집계할 수 있도록,
     분석된 리뷰 전체를 가벼운 JSON으로 직렬화한다 (원문 텍스트는 제외하고
     차트 계산에 필요한 필드만 담아 파일 용량을 아낀다)."""
+    from .aspects import aspects_from_json, aspects_to_json, infer_aspects_from_text
+
     rows = db.get_all_clean()
     payload = []
     for r in rows:
+        raw_aspect = r["aspect_json"] if "aspect_json" in r.keys() else None
+        aspects = aspects_from_json(raw_aspect) if raw_aspect else None
+        # 없거나 전부(전부 not_mentioned)이면 본문에서 규칙 기반으로 보완
+        if not aspects or all(v == "not_mentioned" for v in aspects.values()):
+            aspects = infer_aspects_from_text(r["review_text"] or "")
+            try:
+                db.update_aspects_only(r["id"], aspects_to_json(aspects))
+            except Exception:  # noqa: BLE001
+                pass
         payload.append({
             "id": r["id"],
             "product": r["product"],
@@ -183,6 +194,7 @@ def _all_reviews_payload(db):
             "rating": r["rating"],
             "date": r["review_date"],
             "language": r["language"],
+            "aspects": aspects,
         })
     return payload
 
@@ -201,6 +213,12 @@ def _load_dashboard_js(threshold: float, reviews_json: str) -> str:
     with open(js_path, encoding="utf-8") as f:
         template = f.read()
     return template.replace("__THRESHOLD__", str(threshold)).replace("__ALL_REVIEWS_JSON__", reviews_json)
+
+
+def _load_model_controls_js() -> str:
+    js_path = os.path.join(os.path.dirname(__file__), "dashboard_model_controls.js")
+    with open(js_path, encoding="utf-8") as f:
+        return f.read()
 
 
 def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.75):
@@ -255,6 +273,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     reviews_json = json.dumps(reviews, ensure_ascii=False, default=str)
     chartjs_source = _load_vendor_chartjs()
     dashboard_js = _load_dashboard_js(threshold, reviews_json)
+    model_controls_js = _load_model_controls_js()
 
     css = f"""
   :root {{
@@ -296,6 +315,60 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .filter-bar button:hover {{ background:var(--paper); }}
   .filter-current {{ margin-left:auto; font-size:13px; color:var(--muted); }}
   .filter-current b {{ color:var(--ink); }}
+  .model-bar {{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px 18px; margin-bottom:22px;
+  }}
+  .model-bar label {{ font-size:12px; font-weight:700; color:var(--muted); }}
+  .model-bar select {{
+    font-family:inherit; font-size:13.5px; padding:8px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--ink); min-width:160px;
+  }}
+  .model-bar button {{
+    font-family:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--ink); cursor:pointer;
+  }}
+  .model-bar button.primary {{
+    background:var(--navy); color:#fff; border-color:var(--navy);
+  }}
+  .model-bar button:hover {{ filter:brightness(0.97); }}
+  .model-bar button:disabled {{ opacity:.55; cursor:not-allowed; }}
+  .model-bar.offline {{ opacity:.92; }}
+  .spark-temp {{
+    font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:999px;
+    border:1px solid var(--border); background:var(--paper); color:var(--ink);
+  }}
+  .spark-temp.cool {{ background:rgba(31,175,107,.1); color:#0E8A54; border-color:rgba(31,175,107,.25); }}
+  .spark-temp.warm {{ background:rgba(245,166,35,.12); color:#B87A00; border-color:rgba(245,166,35,.3); }}
+  .spark-temp.hot {{ background:rgba(229,72,77,.12); color:#C7333A; border-color:rgba(229,72,77,.3); }}
+  .spark-temp.warn {{ background:rgba(155,163,180,.12); color:var(--muted); }}
+  .model-status {{ font-size:12.5px; color:var(--muted); margin-left:auto; }}
+  .model-status.ok {{ color:#0E8A54; }}
+  .model-status.warn {{ color:#C7333A; }}
+  .model-status.busy {{ color:#B87A00; }}
+  .upload-bar {{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px 18px; margin-bottom:22px;
+  }}
+  .upload-bar .upload-title {{ font-size:13px; font-weight:700; color:var(--ink); }}
+  .upload-bar .upload-hint {{ font-size:12px; color:var(--muted); }}
+  .upload-bar input[type=file] {{ font-family:inherit; font-size:13px; max-width:280px; }}
+  .upload-bar button {{
+    font-family:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--navy); background:var(--navy); color:#fff; cursor:pointer;
+  }}
+  .upload-bar button:disabled {{ opacity:.55; cursor:not-allowed; }}
+  .upload-bar .upload-status {{ font-size:12.5px; color:var(--muted); margin-left:auto; }}
+  .upload-bar .upload-status.ok {{ color:#0E8A54; }}
+  .upload-bar .upload-status.warn {{ color:#C7333A; }}
+  .upload-bar .upload-status.busy {{ color:#B87A00; }}
+  .compare-link {{
+    font-size:13px; font-weight:700; color:var(--navy); text-decoration:none;
+    padding:8px 10px; white-space:nowrap;
+  }}
+  .compare-link:hover {{ text-decoration:underline; }}
   .empty-note {{
     display:none; text-align:center; color:var(--muted); font-size:13.5px;
     padding:14px; background:var(--surface); border:1px dashed var(--border); border-radius:10px; margin-bottom:20px;
@@ -318,7 +391,9 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .chart-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin:0; }}
   .chart-card h3 {{ font-size:13.5px; margin:0 0 4px; }}
   .chart-card .desc {{ font-size:12px; color:var(--muted); margin-bottom:12px; }}
-  .chart-card canvas {{ max-height:280px; }}
+  .chart-card canvas {{ max-height:300px; }}
+  .chart-card {{ transition: box-shadow .2s ease; }}
+  .chart-card:hover {{ box-shadow:0 4px 16px rgba(16,20,35,.06); }}
   .compare-note {{ display:none; font-size:12.5px; color:var(--muted); padding:10px 4px; }}
 
   .panel {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:22px; }}
@@ -381,6 +456,33 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       <button id="resetFilterBtn" type="button">필터 초기화</button>
       <div class="filter-current">보는 중: <b id="filterLabel">전체</b></div>
     </div>
+
+    <div class="upload-bar" id="uploadBar">
+      <div>
+        <div class="upload-title">리뷰 CSV 업로드</div>
+        <div class="upload-hint">필수: 리뷰 텍스트 컬럼 · 선택: 별점/날짜/제품/카테고리 · 업로드 후 자동 정제·분석</div>
+      </div>
+      <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+      <button id="uploadCsvBtn" type="button">업로드 &amp; 분석</button>
+      <span class="upload-status" id="uploadStatus"></span>
+    </div>
+
+    <div class="model-bar" id="modelBar">
+      <label for="providerSelect">채점 엔진</label>
+      <select id="providerSelect">
+        <option value="spark">Spark (vLLM)</option>
+        <option value="anthropic">Anthropic Claude</option>
+        <option value="fallback">규칙 기반 폴백</option>
+      </select>
+      <label for="modelSelect">모델</label>
+      <select id="modelSelect"><option value="qwen">qwen</option></select>
+      <span class="spark-temp" id="sparkTemp" hidden>Spark 온도 --°C</span>
+      <button id="applyModelBtn" type="button">적용</button>
+      <button id="reanalyzeBtn" class="primary" type="button">이 모델로 재분석</button>
+      <a class="compare-link" href="/compare.html">모델 비교 →</a>
+      <span class="model-status" id="modelStatus">모델 설정 불러오는 중…</span>
+    </div>
+
     <div class="empty-note" id="emptyNote">선택한 조건에 해당하는 리뷰가 없습니다.</div>
 
     <div class="kpi-grid">
@@ -394,7 +496,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
 
     <div class="section-title">시각화 (선택한 카테고리/제품 기준)</div>
     <div class="charts">
-      <div class="chart-card"><h3>감정 분포</h3><div class="desc">긍정/중립/부정 비율</div><canvas id="chartDonut"></canvas></div>
+      <div class="chart-card"><h3>만족도 측면별 감정</h3><div class="desc">상품 · 배송 · 응대 만족도별 긍정/중립/부정</div><canvas id="chartDonut"></canvas></div>
       <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 건수 변화</div><canvas id="chartTrend"></canvas></div>
       <div class="chart-card"><h3>별점-감정 상관관계</h3><div class="desc">별점별 감정 분포</div><canvas id="chartRating"></canvas></div>
       <div class="chart-card"><h3>감정 점수 분포 (1~5점)</h3><div class="desc">신뢰도까지 반영한 감정 강도</div><canvas id="chartGrade"></canvas></div>
@@ -425,11 +527,203 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
 
 <script>{chartjs_source}</script>
 <script>{dashboard_js}</script>
+<script>{model_controls_js}</script>
 </body>
 </html>"""
 
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "dashboard.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return path
+
+
+def build_compare_html(output_dir: str) -> str:
+    """모델 스냅샷 비교 페이지 HTML을 생성한다 (serve 모드 API와 함께 사용)."""
+    chartjs_source = _load_vendor_chartjs()
+    js_path = os.path.join(os.path.dirname(__file__), "dashboard_compare.js")
+    with open(js_path, encoding="utf-8") as f:
+        compare_js = f.read()
+
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>모델 채점 비교</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" crossorigin>
+<style>
+  :root {{
+    --ink:#12172B; --muted:#8A8F98; --border:#E4E7ED; --paper:#F5F6F8; --surface:#FFFFFF;
+    --navy:#1B2340; --positive:#2A9B6A; --neutral:#A8B0BF; --negative:#E56B6F;
+  }}
+  * {{ box-sizing:border-box; }}
+  body {{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif;
+  }}
+  .header {{ background:linear-gradient(135deg,#0F1526 0%,var(--navy) 100%); color:#fff; padding:28px 40px; }}
+  .header a {{ color:#9BE7C4; font-weight:600; text-decoration:none; font-size:13px; }}
+  .eyebrow {{ font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:#FF8A6A; margin-bottom:8px; }}
+  h1 {{ margin:0 0 6px; font-size:24px; font-weight:800; }}
+  .meta {{ color:rgba(255,255,255,.55); font-size:13px; }}
+  .wrap {{ max-width:1100px; margin:0 auto; padding:24px 40px 60px; }}
+  .toolbar {{
+    display:flex; flex-wrap:wrap; gap:12px; align-items:end;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px 18px; margin-bottom:18px;
+  }}
+  label {{ display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:6px; }}
+  select {{
+    font:inherit; min-width:260px; padding:8px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff;
+  }}
+  button {{
+    font:inherit; font-weight:700; padding:9px 16px; border-radius:8px; cursor:pointer;
+    border:1px solid var(--navy); background:var(--navy); color:#fff;
+  }}
+  button:disabled {{ opacity:.5; cursor:not-allowed; }}
+  .status {{ font-size:13px; color:var(--muted); margin-left:auto; }}
+  .status.ok {{ color:#0E8A54; }}
+  .status.warn {{ color:#C7333A; }}
+  .field-hint {{ font-size:12px; color:var(--navy); font-weight:600; margin-top:6px; }}
+  .model-cards {{
+    display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px;
+  }}
+  .model-card {{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:16px 18px; border-top:3px solid var(--navy);
+  }}
+  .model-card.b {{ border-top-color:var(--positive); }}
+  .model-card .side {{ font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }}
+  .model-card .engine {{ font-size:13px; color:var(--muted); margin-top:6px; }}
+  .model-card .model-name {{ font-size:22px; font-weight:800; margin-top:2px; letter-spacing:-.02em; }}
+  .model-card .meta-line {{ font-size:12px; color:var(--muted); margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; }}
+  .model-card .temp {{
+    display:inline-block; padding:2px 8px; border-radius:999px; background:rgba(42,155,106,.1); color:#0E8A54; font-weight:700;
+  }}
+  .kpi-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:18px; }}
+  @media (max-width:720px) {{
+    .model-cards {{ grid-template-columns:1fr; }}
+  }}
+  .kpi {{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; border-left:4px solid var(--navy); }}
+  .kpi .label {{ font-size:12px; color:var(--muted); font-weight:600; margin-bottom:6px; }}
+  .kpi .value {{ font-size:22px; font-weight:800; }}
+  .panel {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:16px; }}
+  .panel h2 {{ margin:0 0 12px; font-size:15px; }}
+  .meta-row {{ display:flex; gap:18px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:8px; }}
+  .meta-row b {{ color:var(--ink); }}
+  table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+  th, td {{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); vertical-align:top; }}
+  th {{ color:var(--muted); font-size:12px; }}
+  .excerpt {{ max-width:280px; color:var(--muted); }}
+  .sent {{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }}
+  .sent.positive {{ background:rgba(42,155,106,.12); color:#0E8A54; }}
+  .sent.neutral {{ background:rgba(168,176,191,.2); color:#5C6575; }}
+  .sent.negative {{ background:rgba(229,107,111,.12); color:#C7333A; }}
+  .sent.null {{ background:#f0f0f0; color:#888; }}
+  .empty-cell {{ text-align:center; color:var(--muted); padding:20px !important; }}
+  #emptyState {{
+    display:none; background:var(--surface); border:1px dashed var(--border); border-radius:12px;
+    padding:28px; text-align:center; color:var(--muted); margin-bottom:16px;
+  }}
+  #emptyState a {{ color:var(--navy); font-weight:700; }}
+  @media (max-width:720px) {{
+    .header, .wrap {{ padding-left:20px; padding-right:20px; }}
+    select {{ min-width:100%; }}
+  }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="eyebrow">Model Snapshot Compare</div>
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <div>
+        <h1>모델 채점 비교</h1>
+        <div class="meta">스냅샷마다 <b style="color:#fff">채점 엔진 · 모델명</b>이 표시됩니다. A/B를 골라 일치율을 확인하세요.</div>
+      </div>
+      <a href="/dashboard.html">← 대시보드</a>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="toolbar">
+      <div>
+        <label for="runA">스냅샷 A (채점 모델)</label>
+        <select id="runA"></select>
+        <div class="field-hint" id="hintA"></div>
+      </div>
+      <div>
+        <label for="runB">스냅샷 B (채점 모델)</label>
+        <select id="runB"></select>
+        <div class="field-hint" id="hintB"></div>
+      </div>
+      <button id="compareBtn" type="button">비교하기</button>
+      <span class="status" id="compareStatus">불러오는 중…</span>
+    </div>
+
+    <div id="emptyState">
+      아직 스냅샷이 없습니다.<br/>
+      <a href="/dashboard.html">대시보드</a>에서 「이 모델로 재분석」을 실행하면 여기에 쌓입니다.
+    </div>
+
+    <div id="resultPanel" style="display:none;">
+      <div class="model-cards">
+        <div class="model-card a">
+          <div class="side">Snapshot A · 채점 모델</div>
+          <div class="engine" id="aEngine">-</div>
+          <div class="model-name" id="aModel">-</div>
+          <div class="meta-line">
+            <span id="aWhen">-</span>
+            <span class="temp" id="aTemp" style="display:none;"></span>
+            <span>평균 신뢰도 <b id="confA">-</b></span>
+          </div>
+        </div>
+        <div class="model-card b">
+          <div class="side">Snapshot B · 채점 모델</div>
+          <div class="engine" id="bEngine">-</div>
+          <div class="model-name" id="bModel">-</div>
+          <div class="meta-line">
+            <span id="bWhen">-</span>
+            <span class="temp" id="bTemp" style="display:none;"></span>
+            <span>평균 신뢰도 <b id="confB">-</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi"><div class="label">공통 리뷰</div><div class="value" id="kpiCommon">-</div></div>
+        <div class="kpi"><div class="label">일치율</div><div class="value" id="kpiAgree">-</div></div>
+        <div class="kpi"><div class="label">비교 대상</div><div class="value" id="kpiCompared">-</div></div>
+        <div class="kpi"><div class="label">불일치</div><div class="value" id="kpiDisagree">-</div></div>
+        <div class="kpi"><div class="label">스냅샷 온도</div><div class="value" id="kpiTemp" style="font-size:16px;">-</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>감정 분포 비교</h2>
+        <canvas id="chartCompare" height="120"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>불일치 리뷰 (상위 50)</h2>
+        <table id="disagreeTable">
+          <thead>
+            <tr>
+              <th>ID</th><th>제품</th><th>리뷰</th>
+              <th id="thA">A</th><th id="thB">B</th><th>|Δconf|</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+<script>{chartjs_source}</script>
+<script>{compare_js}</script>
+</body>
+</html>"""
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "compare.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path

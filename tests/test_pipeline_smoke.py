@@ -168,6 +168,8 @@ class TestAIFailureVsFallback(unittest.TestCase):
         self.assertFalse(client.available)
         result = client.analyze_sentiment("배송이 빨라서 좋아요")
         self.assertIn(result["sentiment"], ("positive", "negative", "neutral"))
+        self.assertIn("aspects", result)
+        self.assertEqual(result["aspects"]["delivery"], "positive")
 
     def test_analyze_sentiment_raises_when_key_present_but_call_fails(self):
         client = self._client_with_key()

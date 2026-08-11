@@ -19,6 +19,7 @@ API 호출 실패 시 로깅 후 해당 건은 스킵하고 다음 건으로 진
 import contextlib
 import sys
 from . import ui
+from .aspects import aspects_to_json
 from .utils import now_str
 
 
@@ -46,7 +47,13 @@ def analyze_reviews(db, ai_client, logger, target="unanalyzed", review_id=None, 
         for idx, row in enumerate(targets, start=1):
             try:
                 result = ai_client.analyze_sentiment(row["review_text"], row["language"] or "ko")
-                db.update_analysis(row["id"], result["sentiment"], result["confidence"], now_str())
+                db.update_analysis(
+                    row["id"],
+                    result["sentiment"],
+                    result["confidence"],
+                    now_str(),
+                    aspect_json=aspects_to_json(result.get("aspects") or {}),
+                )
                 logger.info(f"[{idx}/{total}] ID={row['id']} 분석 완료: {result['sentiment']} ({result['confidence']})")
                 success += 1
             except Exception as e:  # noqa: BLE001 - 개별 건 실패는 전체 흐름을 막지 않는다

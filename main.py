@@ -15,6 +15,7 @@
     python main.py stats
     python main.py extract --sentiment negative
     python main.py dashboard --html
+    python main.py serve --port 8765              # 모델 선택·Spark 온도·재분석 UI 포함 로컬 서버
     python main.py export --format csv --sentiment positive
     python main.py alert --days 7
     python main.py compare
@@ -35,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.logger_setup import setup_logger
 from src.db import Database
 from src.ai_client import AIClient
-from src import ingest, cleaner, analyzer, extractor, query, visualizer, reporter, exporter, alerts, compare, ui, envfile
+from src import ingest, cleaner, analyzer, extractor, query, visualizer, reporter, exporter, alerts, compare, ui, envfile, model_runs
 
 # .env 파일이 있으면 여기서 가장 먼저 읽어둔다 (AIClient 등이 os.environ을 읽기 전에
 # 실행되어야 하므로 import 직후, 다른 어떤 로직보다도 먼저 호출한다).
@@ -127,6 +128,10 @@ def cmd_analyze(db, config, logger, ai_client, target="unanalyzed", review_id=No
             ui.success(f"분석 완료: {result['success']}건 성공")
         else:
             ui.warn(f"분석 완료: {result['success']}건 성공, {result['failed']}건 실패 (logs/app.log 확인)")
+        if result.get("success", 0) > 0:
+            run_id = model_runs.snapshot_after_analyze(db, config, logger, ai_client)
+            if run_id:
+                ui.info(f"모델 스냅샷 저장됨 (run_id={run_id}) — 대시보드 모델 비교에서 확인하세요.")
     return result
 
 
@@ -154,7 +159,10 @@ def cmd_dashboard(db, config, logger, fmt="md", html=False, alert_days=None):
     html_path = None
     if html:
         html_path = reporter.build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=threshold)
-    ui.success(f"대시보드 생성 완료: {saved_path}" + (f", {html_path}" if html_path else ""))
+        compare_path = reporter.build_compare_html(output_dir)
+        ui.success(f"대시보드 생성 완료: {saved_path}, {html_path}, {compare_path}")
+    else:
+        ui.success(f"대시보드 생성 완료: {saved_path}")
     return {"chart_paths": chart_paths, "report_path": saved_path, "html_path": html_path, "alert": alert_result}
 
 
@@ -451,6 +459,10 @@ def build_parser():
     sub.add_parser("menu", help="번호로 고르는 대화형 메뉴를 실행한다 (처음 써보신다면 이걸로 시작하세요)")
     sub.add_parser("setup", help="[편의 기능] API 키를 .env 파일에 저장하는 초기 설정 마법사")
 
+    p = sub.add_parser("serve", help="모델 선택·Spark 온도·재분석이 되는 로컬 대시보드 서버를 띄운다")
+    p.add_argument("--host", default="127.0.0.1", help="바인드 주소 (기본: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=8765, help="포트 (기본: 8765)")
+
     p = sub.add_parser("quickstart", help="가져오기~대시보드까지 전체 파이프라인을 한 번에 실행한다")
     p.add_argument("--file", default=None, help="리뷰 파일 경로 (생략 시 자동 탐지)")
     p.add_argument("--dedup", choices=["skip", "upsert"], default=None)
@@ -567,6 +579,20 @@ def main():
 
     if args.command == "setup":
         cmd_setup()
+        return
+
+    if args.command == "serve":
+        from src.dashboard_server import serve as serve_dashboard
+        output_dir = config.get("visualization", {}).get("output_dir", "output")
+        # HTML이 없으면 한 번 생성 시도
+        html_path = os.path.join(output_dir, "dashboard.html")
+        if not os.path.exists(html_path):
+            db = Database(config["storage"]["db_path"])
+            try:
+                cmd_dashboard(db, config, logger, html=True)
+            finally:
+                db.close()
+        serve_dashboard(output_dir, args.config, logger, host=args.host, port=args.port)
         return
 
     db = Database(config["storage"]["db_path"])

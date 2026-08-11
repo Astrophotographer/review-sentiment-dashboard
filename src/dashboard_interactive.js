@@ -6,15 +6,104 @@ const THRESHOLD = __THRESHOLD__;
 const ALL_REVIEWS = __ALL_REVIEWS_JSON__;
 
 const GRADE_INFO = [
-  { score: 1, label: "아주 나쁨", color: "#C0392B" },
-  { score: 2, label: "나쁨", color: "#E5484D" },
-  { score: 3, label: "보통", color: "#9BA3B4" },
-  { score: 4, label: "좋음", color: "#5FBF8F" },
-  { score: 5, label: "아주 좋음", color: "#1FAF6B" },
+  { score: 1, label: "아주 나쁨", color: "#C4474A" },
+  { score: 2, label: "나쁨", color: "#E56B6F" },
+  { score: 3, label: "보통", color: "#A8B0BF" },
+  { score: 4, label: "좋음", color: "#5CB88A" },
+  { score: 5, label: "아주 좋음", color: "#2A9B6A" },
 ];
-const SENT_COLORS = { positive: "#1FAF6B", neutral: "#9BA3B4", negative: "#E5484D" };
+const SENT_COLORS = { positive: "#2A9B6A", neutral: "#A8B0BF", negative: "#E56B6F" };
 const SENT_LABEL = { positive: "긍정", neutral: "중립", negative: "부정" };
+const ASPECT_META = [
+  { id: "product", label: "상품" },
+  { id: "delivery", label: "배송" },
+  { id: "service", label: "응대" },
+];
 const LANG_LABEL = { ko: "한국어", en: "영어" };
+const CHART_INK = "#12172B";
+const CHART_MUTED = "#8A8F98";
+const CHART_GRID = "rgba(228,231,237,.9)";
+const CHART_FONT = "'Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif";
+
+function hexAlpha(hex, a) {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function baseLegend(position = "bottom") {
+  return {
+    position,
+    labels: {
+      boxWidth: 10,
+      boxHeight: 10,
+      usePointStyle: true,
+      pointStyle: "circle",
+      padding: 16,
+      color: CHART_MUTED,
+      font: { family: CHART_FONT, size: 12, weight: "500" },
+    },
+  };
+}
+
+function baseScales(stacked = false, horizontal = false) {
+  const axis = {
+    grid: { color: CHART_GRID, drawBorder: false, tickLength: 0 },
+    border: { display: false },
+    ticks: {
+      color: CHART_MUTED,
+      font: { family: CHART_FONT, size: 11 },
+      padding: 8,
+    },
+  };
+  const valueAxis = {
+    ...axis,
+    beginAtZero: true,
+    stacked,
+    ticks: { ...axis.ticks, precision: 0 },
+  };
+  const categoryAxis = {
+    ...axis,
+    stacked,
+    grid: { display: false, drawBorder: false },
+  };
+  if (horizontal) return { x: valueAxis, y: categoryAxis };
+  return { x: categoryAxis, y: valueAxis };
+}
+
+function barDataset(extra = {}) {
+  return {
+    borderWidth: 0,
+    borderRadius: 8,
+    borderSkipped: false,
+    maxBarThickness: 28,
+    ...extra,
+  };
+}
+
+/** 누적 막대: 스택 맨 위만 둥글게 (아래는 축에 붙게 유지 — 알약/원형 왜곡 방지) */
+function stackedBarRadius(radius = 10) {
+  return (ctx) => {
+    const { chart, dataIndex, datasetIndex } = ctx;
+    const datasets = chart.data.datasets;
+    let last = -1;
+    datasets.forEach((ds, i) => {
+      const v = Number(ds.data[dataIndex]) || 0;
+      if (v > 0) last = i;
+    });
+    if (last < 0 || datasetIndex !== last) return 0;
+    return {
+      topLeft: radius,
+      topRight: radius,
+      bottomLeft: 0,
+      bottomRight: 0,
+    };
+  };
+}
 
 // Python의 utils.sentiment_grade() 와 동일한 로직 (감정+신뢰도 -> 1~5점 등급)
 function sentimentGrade(sentiment, confidence) {
@@ -152,16 +241,49 @@ function renderKPIs(rows) {
 
 function renderDonut(rows) {
   destroyChart("donut");
-  const pos = rows.filter((r) => r.sentiment === "positive").length;
-  const neu = rows.filter((r) => r.sentiment === "neutral").length;
-  const neg = rows.filter((r) => r.sentiment === "negative").length;
+  // 만족도 측면(상품/배송/응대)별 긍정·중립·부정 건수 — 언급된 측면만 집계
+  const counts = {};
+  ASPECT_META.forEach((a) => {
+    counts[a.id] = { positive: 0, neutral: 0, negative: 0 };
+  });
+  rows.forEach((r) => {
+    const aspects = r.aspects || {};
+    ASPECT_META.forEach((a) => {
+      const v = aspects[a.id];
+      if (v === "positive" || v === "neutral" || v === "negative") {
+        counts[a.id][v] += 1;
+      }
+    });
+  });
+  const labels = ASPECT_META.map((a) => a.label);
   charts.donut = new Chart(document.getElementById("chartDonut"), {
-    type: "doughnut",
+    type: "bar",
     data: {
-      labels: ["긍정", "중립", "부정"],
-      datasets: [{ data: [pos, neu, neg], backgroundColor: [SENT_COLORS.positive, SENT_COLORS.neutral, SENT_COLORS.negative], borderWidth: 3, borderColor: "#fff" }],
+      labels,
+      datasets: ["positive", "neutral", "negative"].map((k) => barDataset({
+        label: SENT_LABEL[k],
+        data: ASPECT_META.map((a) => counts[a.id][k]),
+        backgroundColor: SENT_COLORS[k],
+        hoverBackgroundColor: hexAlpha(SENT_COLORS[k], 0.85),
+      })),
     },
-    options: { cutout: "62%", plugins: { legend: { position: "bottom" } }, animation: { duration: 300 } },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: baseLegend("bottom"),
+        tooltip: {
+          backgroundColor: CHART_INK,
+          titleFont: { family: CHART_FONT, size: 12 },
+          bodyFont: { family: CHART_FONT, size: 12 },
+          padding: 10,
+          cornerRadius: 8,
+          displayColors: true,
+        },
+      },
+      scales: baseScales(false, false),
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 
@@ -197,11 +319,23 @@ function renderRatingMatrix(rows) {
     type: "bar",
     data: {
       labels: ratings.map((r) => r + "점"),
-      datasets: ["negative", "neutral", "positive"].map((k) => ({
-        label: SENT_LABEL[k], data: ratings.map((r) => matrix[r][k]), backgroundColor: SENT_COLORS[k],
+      datasets: ["negative", "neutral", "positive"].map((k) => barDataset({
+        label: SENT_LABEL[k],
+        data: ratings.map((r) => matrix[r][k]),
+        backgroundColor: SENT_COLORS[k],
+        hoverBackgroundColor: hexAlpha(SENT_COLORS[k], 0.85),
+        borderRadius: stackedBarRadius(10),
+        borderSkipped: false,
+        maxBarThickness: 42,
+        categoryPercentage: 0.55,
+        barPercentage: 0.85,
       })),
     },
-    options: { plugins: { legend: { position: "top" } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }, animation: { duration: 300 } },
+    options: {
+      plugins: { legend: baseLegend("top") },
+      scales: baseScales(true, false),
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 
@@ -213,9 +347,19 @@ function renderGrade(rows) {
     type: "bar",
     data: {
       labels: GRADE_INFO.map((g) => g.score + "점 " + g.label),
-      datasets: [{ data: GRADE_INFO.map((g) => counts[g.score]), backgroundColor: GRADE_INFO.map((g) => g.color) }],
+      datasets: [barDataset({
+        data: GRADE_INFO.map((g) => counts[g.score]),
+        backgroundColor: GRADE_INFO.map((g) => g.color),
+        hoverBackgroundColor: GRADE_INFO.map((g) => hexAlpha(g.color, 0.85)),
+        maxBarThickness: 22,
+      })],
     },
-    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }, animation: { duration: 300 } },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: baseScales(false, true),
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 
@@ -234,8 +378,22 @@ function renderLanguage(rows) {
   const langs = Object.keys(byLang).sort((a, b) => byLang[b].count - byLang[a].count);
   charts.lang = new Chart(document.getElementById("chartLanguage"), {
     type: "bar",
-    data: { labels: langs.map((l) => LANG_LABEL[l] || l), datasets: [{ label: "리뷰 수", data: langs.map((l) => byLang[l].count), backgroundColor: "#1B2340" }] },
-    options: { indexAxis: "y", plugins: { legend: { position: "top" } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }, animation: { duration: 300 } },
+    data: {
+      labels: langs.map((l) => LANG_LABEL[l] || l),
+      datasets: [barDataset({
+        label: "리뷰 수",
+        data: langs.map((l) => byLang[l].count),
+        backgroundColor: "#2C3658",
+        hoverBackgroundColor: "#1B2340",
+        maxBarThickness: 26,
+      })],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: baseScales(false, true),
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 
@@ -258,8 +416,24 @@ function renderProductComparison(rows) {
   const posRatios = products.map(posRatio);
   charts.prodComp = new Chart(document.getElementById("chartProductComparison"), {
     type: "bar",
-    data: { labels: products, datasets: [{ label: "긍정비율(%)", data: posRatios, backgroundColor: posRatios.map((v) => (v >= 40 ? SENT_COLORS.positive : v >= 25 ? "#F2A93B" : SENT_COLORS.negative)) }] },
-    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, max: 100 } }, animation: { duration: 300 } },
+    data: {
+      labels: products,
+      datasets: [barDataset({
+        label: "긍정비율(%)",
+        data: posRatios,
+        backgroundColor: posRatios.map((v) => (v >= 40 ? SENT_COLORS.positive : v >= 25 ? "#E0A45A" : SENT_COLORS.negative)),
+        maxBarThickness: 18,
+      })],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: {
+        ...baseScales(false, true),
+        x: { ...baseScales(false, true).x, max: 100 },
+      },
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 
@@ -278,9 +452,19 @@ function renderProductBreakdown(rows) {
     type: "bar",
     data: {
       labels: products,
-      datasets: ["negative", "neutral", "positive"].map((k) => ({ label: SENT_LABEL[k], data: products.map((p) => byProd[p][k]), backgroundColor: SENT_COLORS[k] })),
+      datasets: ["negative", "neutral", "positive"].map((k) => barDataset({
+        label: SENT_LABEL[k],
+        data: products.map((p) => byProd[p][k]),
+        backgroundColor: SENT_COLORS[k],
+        maxBarThickness: 18,
+      })),
     },
-    options: { indexAxis: "y", plugins: { legend: { position: "top" } }, scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } }, animation: { duration: 300 } },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: baseLegend("top") },
+      scales: baseScales(true, true),
+      animation: { duration: 450, easing: "easeOutQuart" },
+    },
   });
 }
 

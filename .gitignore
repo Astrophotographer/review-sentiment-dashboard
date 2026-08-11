@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
+.DS_Store
+.venv/
+venv/
 data/*.db
+data/*.bak*
 logs/*.log
 output/*.png
 output/*.html
@@ -13,3 +17,4 @@ output/*.xlsx
 
 
 .env
+uploads/

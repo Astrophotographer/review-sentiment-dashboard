@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS clean_reviews (
     sentiment TEXT,
     confidence REAL,
     analyzed_at TEXT,
+    aspect_json TEXT,
     FOREIGN KEY (raw_id) REFERENCES raw_reviews (id)
 );
 
@@ -54,6 +55,28 @@ CREATE TABLE IF NOT EXISTS extractions (
     result_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS model_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    label TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    review_count INTEGER NOT NULL DEFAULT 0,
+    analyzed_count INTEGER NOT NULL DEFAULT 0,
+    temp_c REAL,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS model_run_results (
+    run_id INTEGER NOT NULL,
+    review_id INTEGER NOT NULL,
+    sentiment TEXT,
+    confidence REAL,
+    PRIMARY KEY (run_id, review_id),
+    FOREIGN KEY (run_id) REFERENCES model_runs (id),
+    FOREIGN KEY (review_id) REFERENCES clean_reviews (id)
+);
 """
 
 
@@ -64,7 +87,13 @@ class Database:
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(clean_reviews)").fetchall()}
+        if "aspect_json" not in cols:
+            self.conn.execute("ALTER TABLE clean_reviews ADD COLUMN aspect_json TEXT")
 
     # ---------------- raw_reviews ----------------
     def raw_hash_exists(self, dedup_hash: str) -> bool:
@@ -161,10 +190,30 @@ class Database:
         q = ",".join("?" * len(ids))
         return self.conn.execute(f"SELECT * FROM clean_reviews WHERE id IN ({q})", ids).fetchall()
 
-    def update_analysis(self, review_id: int, sentiment: str, confidence: float, analyzed_at: str):
+    def update_analysis(
+        self,
+        review_id: int,
+        sentiment: str,
+        confidence: float,
+        analyzed_at: str,
+        aspect_json: Optional[str] = None,
+    ):
+        if aspect_json is None:
+            self.conn.execute(
+                "UPDATE clean_reviews SET sentiment=?, confidence=?, analyzed_at=? WHERE id=?",
+                (sentiment, confidence, analyzed_at, review_id),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE clean_reviews SET sentiment=?, confidence=?, analyzed_at=?, aspect_json=? WHERE id=?",
+                (sentiment, confidence, analyzed_at, aspect_json, review_id),
+            )
+        self.conn.commit()
+
+    def update_aspects_only(self, review_id: int, aspect_json: str):
         self.conn.execute(
-            "UPDATE clean_reviews SET sentiment=?, confidence=?, analyzed_at=? WHERE id=?",
-            (sentiment, confidence, analyzed_at, review_id),
+            "UPDATE clean_reviews SET aspect_json=? WHERE id=?",
+            (aspect_json, review_id),
         )
         self.conn.commit()
 
@@ -302,6 +351,149 @@ class Database:
         else:
             cur = self.conn.execute("SELECT * FROM extractions ORDER BY id DESC LIMIT 1")
         return cur.fetchone()
+
+    # ---------------- model_runs (채점 스냅샷) ----------------
+    def count_model_runs(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) c FROM model_runs").fetchone()["c"]
+
+    def save_model_run(
+        self,
+        provider: str,
+        model: str,
+        label: str,
+        created_at: str,
+        temp_c: Optional[float] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        """현재 clean_reviews 감정 결과를 스냅샷으로 저장한다."""
+        rows = self.get_all_clean()
+        analyzed = sum(1 for r in rows if r["sentiment"])
+        cur = self.conn.execute(
+            """INSERT INTO model_runs
+               (provider, model, label, created_at, review_count, analyzed_count, temp_c, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (provider, model, label, created_at, len(rows), analyzed, temp_c, notes),
+        )
+        run_id = cur.lastrowid
+        self.conn.executemany(
+            """INSERT INTO model_run_results (run_id, review_id, sentiment, confidence)
+               VALUES (?, ?, ?, ?)""",
+            [(run_id, r["id"], r["sentiment"], r["confidence"]) for r in rows],
+        )
+        self.conn.commit()
+        return run_id
+
+    def seed_model_run_if_empty(self, provider: str, model: str, label: str, created_at: str) -> Optional[int]:
+        """model_runs 가 비어 있고 분석된 clean 리뷰가 있으면 시드 스냅샷 1개를 만든다."""
+        if self.count_model_runs() > 0:
+            return None
+        analyzed = self.conn.execute(
+            "SELECT COUNT(*) c FROM clean_reviews WHERE sentiment IS NOT NULL"
+        ).fetchone()["c"]
+        if analyzed <= 0:
+            return None
+        return self.save_model_run(provider, model, label, created_at, temp_c=None, notes="기존 분석 결과 시드")
+
+    def list_model_runs(self) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM model_runs ORDER BY id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_model_run(self, run_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute("SELECT * FROM model_runs WHERE id=?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
+    def compare_model_runs(self, run_a: int, run_b: int, disagreement_limit: int = 50) -> Dict[str, Any]:
+        meta_a = self.get_model_run(run_a)
+        meta_b = self.get_model_run(run_b)
+        if not meta_a or not meta_b:
+            raise ValueError("존재하지 않는 런 ID 입니다.")
+
+        rows_a = self.conn.execute(
+            "SELECT review_id, sentiment, confidence FROM model_run_results WHERE run_id=?",
+            (run_a,),
+        ).fetchall()
+        rows_b = self.conn.execute(
+            "SELECT review_id, sentiment, confidence FROM model_run_results WHERE run_id=?",
+            (run_b,),
+        ).fetchall()
+        map_a = {r["review_id"]: r for r in rows_a}
+        map_b = {r["review_id"]: r for r in rows_b}
+        common_ids = sorted(set(map_a) & set(map_b))
+
+        def dist(mmap):
+            d = {"positive": 0, "neutral": 0, "negative": 0}
+            confs = []
+            for rid in common_ids:
+                s = mmap[rid]["sentiment"]
+                if s in d:
+                    d[s] += 1
+                if mmap[rid]["confidence"] is not None and s:
+                    confs.append(float(mmap[rid]["confidence"]))
+            total = sum(d.values()) or 1
+            return {
+                "counts": d,
+                "ratios": {k: round(v / total * 100, 1) for k, v in d.items()},
+                "avg_confidence": round(sum(confs) / len(confs), 3) if confs else None,
+            }
+
+        compared = 0
+        agree = 0
+        disagreements = []
+        for rid in common_ids:
+            sa = map_a[rid]["sentiment"]
+            sb = map_b[rid]["sentiment"]
+            if sa is None and sb is None:
+                continue
+            compared += 1
+            if sa == sb:
+                agree += 1
+                continue
+            ca = map_a[rid]["confidence"]
+            cb = map_b[rid]["confidence"]
+            ca_f = float(ca) if ca is not None else 0.0
+            cb_f = float(cb) if cb is not None else 0.0
+            disagreements.append({
+                "review_id": rid,
+                "sentiment_a": sa,
+                "confidence_a": ca,
+                "sentiment_b": sb,
+                "confidence_b": cb,
+                "conf_delta": abs(ca_f - cb_f),
+            })
+
+        disagreements.sort(key=lambda x: -x["conf_delta"])
+        # 리뷰 본문/제품 보강
+        top = disagreements[:disagreement_limit]
+        if top:
+            ids = [d["review_id"] for d in top]
+            q = ",".join("?" * len(ids))
+            info = {
+                r["id"]: r
+                for r in self.conn.execute(
+                    f"SELECT id, product, review_text FROM clean_reviews WHERE id IN ({q})", ids
+                ).fetchall()
+            }
+            for d in top:
+                row = info.get(d["review_id"])
+                if row:
+                    text = row["review_text"] or ""
+                    d["product"] = row["product"]
+                    d["review_excerpt"] = text if len(text) <= 80 else text[:77] + "..."
+
+        return {
+            "run_a": meta_a,
+            "run_b": meta_b,
+            "common_review_count": len(common_ids),
+            "compared_count": compared,
+            "agree_count": agree,
+            "agreement_rate": round(agree / compared * 100, 1) if compared else None,
+            "dist_a": dist(map_a),
+            "dist_b": dist(map_b),
+            "disagreement_total": len(disagreements),
+            "disagreements": top,
+        }
 
     def close(self):
         self.conn.close()

@@ -1,7 +1,7 @@
 # 모델 채점 스냅샷 비교 페이지 설계
 
 **날짜:** 2026-08-11  
-**상태:** 승인 대기 (구현 전)  
+**상태:** 구현됨 (2026-08-11)  
 **관련:** DGX Spark / Anthropic / 규칙 기반 폴백 채점 결과 비교
 
 ## 목표
@@ -140,3 +140,32 @@ SQLite에 스냅샷 2개 테이블을 추가한다.
 - 비교 방식: **저장된 스냅샷끼리 비교** (옵션 2)
 - 실시간 다중 모델 동시 채점은 하지 않음
 - Spark 온도는 스냅샷 메타에 있을 때만 표시
+
+---
+
+## 추가 승인: 측면(Aspect) 감정 분석
+
+**날짜:** 2026-08-11  
+**선택:** 고정 **3개** 측면
+
+| id | 표시명 |
+|----|--------|
+| `product` | 상품 만족도 |
+| `delivery` | 배송 만족도 |
+| `service` | 응대 만족도 |
+
+각 측면 값: `positive` / `negative` / `neutral` / `not_mentioned` (+ optional confidence).
+
+### 저장
+
+- `clean_reviews`에 overall sentiment는 유지
+- 측면 결과는 JSON 컬럼 `aspect_json` 또는 별도 `review_aspects` 테이블
+- `model_run_results`에도 `aspect_json`을 넣어 스냅샷 비교 시 측면별 일치율 확장 가능
+
+### 샘플 데이터
+
+`sample_data/reviews_sample.csv`는 위 **3측면** 키워드/문장이 드러나도록 180건 재작성함.
+
+### UI
+
+대시보드 상단에 3측면 긍정비율 KPI. 페이지 레이아웃은 기존 대시보드를 유지하고 그래프 스타일만 개선.

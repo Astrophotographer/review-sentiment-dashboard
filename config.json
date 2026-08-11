@@ -1,11 +1,14 @@
 {
   "ai": {
-    "provider": "anthropic",
+    "provider": "spark",
     "api_key_env": "ANTHROPIC_API_KEY",
-    "sentiment_model": "claude-haiku-4-5-20251001",
-    "extract_model": "claude-sonnet-5",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "spark_health_url": "http://100.114.218.1:8080/health",
+    "enable_thinking": false,
+    "sentiment_model": "qwen",
+    "extract_model": "qwen",
     "max_tokens": 1024,
-    "request_timeout_sec": 30
+    "request_timeout_sec": 90
   },
   "dedup_policy": "skip",
   "sentiment_grade": {
