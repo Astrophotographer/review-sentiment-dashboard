@@ -28,6 +28,7 @@
 17. [더 쉽게 쓰기: menu/quickstart와 편의 기능](#17-더-쉽게-쓰기-menuquickstart와-편의-기능)
 18. [실행 예시 모음 (전체 세션 시나리오)](#18-실행-예시-모음-전체-세션-시나리오)
 19. [팀 역할 배분](#19-팀-역할-배분)
+
 ---
 
 ## 0. 이 프로젝트를 한마디로 하면
@@ -41,7 +42,7 @@
 "그래서 무엇을 개선해야 하는지"까지 보여주는 것을 목표로 만들었습니다.
 
 ```
-CSV/Excel 리뷰 파일  →  [이 프로그램]  →  차트 5종 + 종합 리포트 + HTML 대시보드
+CSV/Excel 리뷰 파일  →  [이 프로그램]  →  차트 7종 + 종합 리포트 + HTML 대시보드
                                         + CSV/Excel/JSONL 내보내기
 ```
 
@@ -55,9 +56,8 @@ CSV/Excel 리뷰 파일  →  [이 프로그램]  →  차트 5종 + 종합 리�
 > 자세한 내용은 [17절](#17-더-쉽게-쓰기-menuquickstart와-편의-기능)에 있습니다.
 
 ```bash
-# 0) 비쥬얼 스튜디오 터미널에서 바탕화면으로 이동한뒤, 깃 클론으로 주소복사해서 바탕화면에 파일 다운받기.
-cd desktop
-git clone https://github.com/krasia45/review_dashboard.git
+# 0) 압축 풀고 폴더 진입
+cd review_dashboard
 
 # 1) 필요한 라이브러리 설치 (requests, matplotlib, openpyxl)
 pip install -r requirements.txt
@@ -81,7 +81,7 @@ pip install -r requirements.txt
 > 성공시키면 함께 해결됩니다.
 
 ```bash
-# 2) 샘플 리뷰 100건 가져오기
+# 2) 샘플 리뷰 180건 가져오기
 python main.py import --file sample_data/reviews_sample.csv
 
 # 3) 데이터 정제 (이상한 값 걸러내고 형식 통일)
@@ -96,7 +96,7 @@ python main.py stats
 # 6) AI로 키워드/요약/개선제안 뽑기 (전체 리뷰 대상)
 python main.py extract --sentiment all
 
-# 7) 차트 5종 + 리포트 + HTML 대시보드 생성
+# 7) 차트 7종 + 리포트 + HTML 대시보드 생성
 python main.py dashboard --html
 
 # 8) 결과를 CSV/Excel로 내보내기
@@ -123,6 +123,7 @@ python -m unittest discover -s tests -v
 | `rating_sentiment_matrix.png` | 별점별 감정 분포 누적 막대 차트 |
 | `sentiment_grade.png` | 감정 점수(1\~5, 아주나쁨\~아주좋음) 분포 차트 |
 | `product_comparison.png` | 제품별 평균 별점/긍정비율 비교 |
+| `product_sentiment_breakdown.png` | 제품별 긍정/중립/부정 실제 건수 (누적 막대) |
 | `language_distribution.png` | [보너스] 언어(한/영)별 리뷰 수·긍정비율 |
 | `dashboard_report.md` | 콘솔에 출력된 것과 같은 종합 리포트 (품질지표+TOP5+AI인사이트) |
 | `dashboard.html` | [보너스] 위 모든 차트+통계를 한 페이지에 담은 웹페이지 |
@@ -137,7 +138,7 @@ python -m unittest discover -s tests -v
 
 ### 실행 결과 미리보기 (스크린샷)
 
-샘플 데이터(100건)로 위 과정을 실행하면 실제로 아래와 같은 결과물이 만들어집니다.
+샘플 데이터(180건)로 위 과정을 실행하면 실제로 아래와 같은 결과물이 만들어집니다.
 (`docs/screenshots/`에 미리 생성해 둔 예시 이미지이며, 직접 실행하면 `output/` 폴더에
 동일한 파일이 생성됩니다.)
 
@@ -145,7 +146,7 @@ python -m unittest discover -s tests -v
 
 ![HTML 대시보드 미리보기](docs/screenshots/dashboard_html_preview.png)
 
-**개별 차트 6종** (`output/*.png`)
+**개별 차트 7종** (`output/*.png`)
 
 | 감정 분포 (도넛) | 시간별 감정 추이 |
 |---|---|
@@ -155,9 +156,13 @@ python -m unittest discover -s tests -v
 |---|---|
 | ![별점-감정 상관관계](docs/screenshots/rating_sentiment_matrix.png) | ![감정 점수 분포](docs/screenshots/sentiment_grade.png) |
 
-| 제품별 비교 [보너스] | 언어별 분포 [보너스: 다국어 지원] |
+| 제품별 비교 [보너스] | 제품별 감정 분포 |
 |---|---|
-| ![제품별 비교](docs/screenshots/product_comparison.png) | ![언어별 분포](docs/screenshots/language_distribution.png) |
+| ![제품별 비교](docs/screenshots/product_comparison.png) | ![제품별 감정 분포](docs/screenshots/product_sentiment_breakdown.png) |
+
+**언어별 분포 [보너스: 다국어 지원]**
+
+![언어별 분포](docs/screenshots/language_distribution.png)
 
 ---
 
@@ -201,7 +206,7 @@ review_dashboard/
 ├── README.md                    # 지금 읽고 있는 이 문서
 │
 ├── sample_data/
-│   └── reviews_sample.csv       # 샘플 리뷰 100건 (제품 12종 × 카테고리 6종, 한/영 혼합)
+│   └── reviews_sample.csv       # 샘플 리뷰 180건 (제품 12종 × 카테고리 6종, 한/영 혼합)
 │
 ├── src/                         # 실제 로직이 담긴 16개 모듈
 │   ├── __init__.py
@@ -220,7 +225,10 @@ review_dashboard/
 │   ├── utils.py                 # 텍스트/날짜/별점 정규화, 해시, 언어감지 등 공통 함수
 │   ├── ui.py                    # [사용자 편의] 색상/표/진행률 바/프롬프트 터미널 UI 헬퍼
 │   ├── logger_setup.py          # 로깅(logging) 설정
-│   └── envfile.py               # [사용자 편의] .env 파일 로드/저장 (API 키 영구 저장)
+│   ├── envfile.py               # [사용자 편의] .env 파일 로드/저장 (API 키 영구 저장)
+│   ├── dashboard_interactive.js # [보너스] HTML 대시보드 카테고리/제품 필터 자바스크립트
+│   └── vendor/
+│       └── chart.umd.js         # Chart.js 라이브러리 내장(오프라인 작동용, CDN 아님)
 │
 ├── tests/                       # 자동 테스트
 │   ├── __init__.py
@@ -231,7 +239,7 @@ review_dashboard/
 │   └── test_main_cli.py         # [사용자 편의] CLI 통합 테스트 11건 (menu/quickstart/search/setup/-y 등)
 │
 ├── docs/
-│   └── screenshots/             # README용 미리보기 이미지 (차트 5종 + HTML 대시보드)
+│   └── screenshots/             # README용 미리보기 이미지 (차트 7종 + HTML 대시보드)
 │
 ├── data/                        # (실행 시 생성) SQLite DB 파일 위치
 ├── logs/                        # (실행 시 생성) 로그 파일 위치
@@ -282,7 +290,7 @@ python main.py import --file sample_data/reviews_sample.csv --dedup skip
 
 ```
 [INFO] 파일 로드: sample_data/reviews_sample.csv
-[INFO] 총 100건 감지, 유효 100건, 스킵 0건 (중복/필수필드 누락, 정책=skip)
+[INFO] 총 180건 감지, 유효 180건, 스킵 0건 (중복/필수필드 누락, 정책=skip)
 [INFO] raw 저장소에 저장 완료
 ```
 
@@ -314,8 +322,8 @@ python main.py clean --dedup skip
 | 중복 처리 | 정제된 텍스트 기준으로 다시 한 번 skip/upsert 적용 |
 
 ```
-[INFO] 정제 대상 원본 리뷰: 100건
-[INFO] 정제 완료: 신규 100건, 갱신 0건, 짧은 리뷰 제외 0건, 중복 스킵 0건
+[INFO] 정제 대상 원본 리뷰: 180건
+[INFO] 정제 완료: 신규 180건, 갱신 0건, 짧은 리뷰 제외 0건, 중복 스킵 0건
 ```
 
 ### 5-4. `analyze` — AI 감정 분석
@@ -331,10 +339,10 @@ AI(또는 API 키가 없으면 규칙 기반 폴백)에게 리뷰 텍스트를 �
 중단되지 않습니다.
 
 ```
-[INFO] 분석 대상: 100건
+[INFO] 분석 대상: 180건
 [INFO] [1/48] ID=1 분석 완료: neutral (0.55)
 ...
-[INFO] 분석 완료: 100건 성공, 0건 실패
+[INFO] 분석 완료: 180건 성공, 0건 실패
 ```
 
 > 💡 여기서 저장되는 `0.55` 같은 숫자는 **신뢰도(confidence)** — "이 판단이 맞다고
@@ -425,9 +433,16 @@ python main.py stats
 python main.py dashboard --format md --html --alert-days 7
 ```
 
-matplotlib 차트 6종을 그려 PNG로 저장하고, 품질지표+TOP5 키워드+AI 인사이트+감정점수
+matplotlib 차트 7종을 그려 PNG로 저장하고, 품질지표+TOP5 키워드+AI 인사이트+감정점수
 분포+감정급증 알림을 담은 리포트를 콘솔에 출력하면서 파일(`.md`/`.txt`)로도 저장합니다.
 `--html`을 주면 보너스 과제인 **단일 HTML 대시보드**도 함께 만듭니다.
+
+> 🖱️ **HTML 대시보드는 카테고리/제품을 골라서 그 조건만 다시 볼 수 있습니다.**
+> `output/dashboard.html`을 열면 상단에 카테고리·제품 선택 드롭다운이 있고, 고르는
+> 즉시 KPI 숫자와 모든 차트가 그 조건에 맞게 다시 그려집니다(제품을 특정하면 "제품별
+> 비교/제품별 감정 분포" 차트는 비교 대상이 없어 자동으로 숨겨집니다). 리뷰 데이터와
+> 차트 라이브러리(Chart.js)를 파일 안에 통째로 넣어뒀기 때문에, **인터넷 연결 없이
+> 파일만 더블클릭해도** 그대로 작동합니다.
 
 ### 5-11. `export` — 결과 내보내기
 
@@ -482,7 +497,7 @@ python main.py compare --by category --targets "전자기기,생활가전"
 | `analyzer.py` | clean_reviews의 리뷰들을 AI로 감정분석 | `analyze_reviews()` |
 | `extractor.py` | 조건별 리뷰를 모아 AI로 키워드/요약 추출 | `extract_insights()`, `print_insights()` |
 | `query.py` | list/show/stats 커맨드의 조회·출력 로직 | `list_reviews()`, `show_review()`, `print_stats()` |
-| `visualizer.py` | matplotlib으로 차트 5종을 그려 PNG 저장, 한글 폰트 적용 | `generate_all_charts()` |
+| `visualizer.py` | matplotlib으로 차트 7종을 그려 PNG로 저장, 한글 폰트 적용 | `generate_all_charts()` |
 | `reporter.py` | 텍스트 리포트 + HTML 대시보드 생성 | `build_report_text()`, `build_html_dashboard()` |
 | `exporter.py` | clean_reviews를 CSV/JSONL/Excel로 내보내기 | `export_data()` |
 | `alerts.py` | [보너스] 최근 N일 부정비율 급증 감지 | `check_negative_spike()` |
@@ -554,8 +569,8 @@ system = (
 "message":"Your credit balance is too low to access the Anthropic API. ..."}}
 [ERROR] [1/100] ID=1 분석 실패: AI 감정분석 API 호출에 실패했습니다 (...)
 ...
-[INFO] 분석 완료: 0건 성공, 100건 실패
-⚠ 분석 완료: 0건 성공, 100건 실패 (logs/app.log 확인)
+[INFO] 분석 완료: 0건 성공, 180건 실패
+⚠ 분석 완료: 0건 성공, 180건 실패 (logs/app.log 확인)
 ```
 
 > 💡 **"API 키를 넣었는데 결과가 여전히 폴백 같아요"** 싶다면, 콘솔에 위와 같은
@@ -664,7 +679,7 @@ matplotlib 기본 폰트는 한글을 지원하지 않아서, 아무 설정도 �
 `config.json`의 `font_candidates` 목록에 여러 폰트 후보가 순서대로 있어서, 실행
 환경(리눅스/맥/윈도우)이 달라져도 유연하게 대응합니다.
 
-### 9-4. 생성되는 차트 6종
+### 9-4. 생성되는 차트 7종
 
 | 파일 | 종류 | 요구사항 |
 |---|---|---|
@@ -673,6 +688,7 @@ matplotlib 기본 폰트는 한글을 지원하지 않아서, 아무 설정도 �
 | `rating_sentiment_matrix.png` | 누적 막대 차트 (값 라벨 포함) | 필수 (별점-감정 상관관계) |
 | `sentiment_grade.png` | 가로 막대 (5단계, 빨강→초록 그라데이션) | 추가 구현 (감정 점수 1\~5 분포) |
 | `product_comparison.png` | 가로 막대 2개 (값 라벨 포함) | 보너스 (제품 비교) |
+| `product_sentiment_breakdown.png` | 누적 가로 막대 (제품별 긍정/중립/부정 실제 건수) | 추가 구현 (제품별 감정 분포 시각화) |
 | `language_distribution.png` | 가로 막대 2개 (값 라벨 포함) | 보너스 (다국어 지원 시각화) |
 
 ---
@@ -691,21 +707,34 @@ matplotlib 기본 폰트는 한글을 지원하지 않아서, 아무 설정도 �
 7. **생성된 차트 파일 목록**
 
 이걸 콘솔에 출력하는 동시에 `output/dashboard_report.md`(또는 `.txt`) 파일로도
-저장합니다. `--html`을 주면 위 내용 전부 + 차트 이미지를 base64로 임베드한 **단일
-HTML 파일**(`output/dashboard.html`)도 만듭니다 — 인터넷 연결 없이 더블클릭만 해도
-브라우저에서 바로 열리는 정적 파일입니다.
+저장합니다. `--html`을 주면 위 내용 전부를 담은 **단일 HTML 파일**
+(`output/dashboard.html`)도 만듭니다.
+
+**정적 이미지가 아니라 카테고리/제품을 골라서 다시 볼 수 있는 대시보드입니다.**
+matplotlib으로 그린 PNG 차트를 그대로 붙여넣는 대신, 분석된 리뷰 데이터 전체를
+JSON으로 파일 안에 통째로 넣어두고 **Chart.js**로 브라우저에서 즉석으로 다시
+그립니다. 상단 드롭다운에서 카테고리 → 제품을 고르면 KPI 숫자와 모든 차트가 그
+조건에 맞게 실시간으로 다시 그려지고, 제품을 하나로 특정하면 "제품별 비교" 류
+차트는 비교 대상이 없어져서 자동으로 숨겨집니다. Chart.js 라이브러리 자체도
+파일 안에 내장(`src/vendor/chart.umd.js`)되어 있어서, **인터넷 연결 없이 파일만
+더블클릭해도** 그대로 작동하는 단일 정적 파일입니다 (서버·DB 연결 없이 매번 새로
+만드는 스냅샷이라 "실시간 웹 대시보드 금지" 제약과도 충돌하지 않습니다).
 
 **HTML 대시보드 디자인**: 딥 네이비 헤더 배너(현재 감정 급증 여부를 알려주는 신호
-배지 포함) → 색상 강조선이 달린 KPI 카드 5개 → 차트 카드 그리드 → 긍정/부정 키워드를
-알약(pill) 배지로, AI 요약을 코럴 컬러 강조선이 있는 인용구 블록으로, 불만/칭찬 유형을
-인라인 미니 막대그래프로 표현한 인사이트 패널 → 언어 분포 세그먼트 바 순으로
-구성되어 있으며, 차트와 동일한 색상 팔레트를 공유해 전체적으로 하나의 제품처럼
-느껴지도록 디자인했습니다. 모바일 폭에서도 카드가 자연스럽게 1열로 쌓이도록
-반응형으로 만들었습니다.
+배지 포함) → 카테고리/제품 필터 바 → 색상 강조선이 달린 KPI 카드 6개 → 차트 카드
+그리드(필터에 따라 실시간으로 다시 그려짐) → 긍정/부정 키워드를 알약(pill) 배지로,
+AI 요약을 코럴 컬러 강조선이 있는 인용구 블록으로, 불만/칭찬 유형을 인라인 미니
+막대그래프로 표현한 인사이트 패널 → 언어 분포 세그먼트 바 순으로 구성되어 있으며,
+차트와 동일한 색상 팔레트를 공유해 전체적으로 하나의 제품처럼 느껴지도록
+디자인했습니다. 모바일 폭에서도 카드가 자연스럽게 1열로 쌓이도록 반응형으로
+만들었습니다.
 
-> 💡 `extract --sentiment all`(조건 없이)을 dashboard 실행 전에 한 번 돌려두면,
-> 리포트에 긍정·부정 키워드가 둘 다 채워집니다. (extract는 실행할 때마다 "가장 최근
-> 결과"를 새로 저장하고, dashboard는 그 최신 결과를 그대로 가져다 쓰기 때문입니다.)
+> 💡 AI 키워드·인사이트 패널은 `extract` 커맨드를 실행했을 때의 조건을 그대로
+> 보여주는 **정적 섹션**입니다 (실제 AI 호출 결과라 카테고리/제품 필터를 바꿔도
+> 자동으로 다시 계산되지 않아요). `extract --sentiment all`(조건 없이)을 dashboard
+> 실행 전에 한 번 돌려두면 긍정·부정 키워드가 둘 다 채워지고, 특정 제품의 AI
+> 인사이트가 필요하면 `python main.py extract --product "제품명"`을 따로
+> 실행하세요.
 
 ---
 
@@ -725,11 +754,13 @@ HTML 파일**(`output/dashboard.html`)도 만듭니다 — 인터넷 연결 없�
 때만 경고를 띄우도록 만들어, 단순히 "부정이 많다"가 아니라 "평소보다 튀었다"는 진짜
 이상 신호만 잡아냅니다.
 
-### ③ HTML 대시보드
+### ③ HTML 대시보드 (카테고리/제품 필터 지원)
 
-`reporter.build_html_dashboard()`가 모든 차트를 base64로 인코딩해서 이미지 태그에
-직접 삽입하므로, 파일 하나만 있으면(별도 이미지 파일 없이도) 브라우저에서 전체
-대시보드를 볼 수 있습니다.
+`reporter.build_html_dashboard()`가 리뷰 데이터 전체를 JSON으로 파일에 내장하고,
+`Chart.js`(역시 파일에 내장, CDN 아님)로 브라우저에서 실시간으로 차트를 그립니다.
+카테고리·제품 드롭다운을 고르면 KPI와 모든 차트가 그 조건으로 즉시 다시 그려져서,
+단순 정적 이미지 대시보드가 아니라 **필터링이 가능한 대시보드**입니다. 자세한
+설명은 10절을 참고하세요.
 
 ### ④ 제품/카테고리별 비교 분석
 
@@ -737,6 +768,11 @@ HTML 파일**(`output/dashboard.html`)도 만듭니다 — 인터넷 연결 없�
 리뷰 수·평균 별점·긍정 비율을 계산하고, 가장 좋은/나쁜 그룹을 짚어줍니다. 샘플
 데이터는 제품 12종과 카테고리 6종(전자기기/생활가전/운동·피트니스/주방용품/
 뷰티·미용/반려동물용품)으로 구성되어 있어 두 기준 모두 바로 시험해볼 수 있습니다.
+
+> 💡 **제품별로 15건씩(균등 배분)** 넣어뒀습니다. 제품 종류만 다양하고 제품당
+> 리뷰가 5\~8건 수준으로 적으면, "긍정 비율 50%" 같은 수치가 리뷰 한두 건만
+> 바뀌어도 크게 흔들려서 제품별 평가 자체의 신뢰도가 떨어집니다. 15건 정도는
+> 되어야 제품 간 비교가 "우연한 차이"가 아니라 "의미 있는 경향"으로 읽힙니다.
 
 ---
 
@@ -749,12 +785,12 @@ python -m unittest discover -s tests -v
 | 파일 | 테스트 내용 |
 |---|---|
 | `tests/test_utils.py` | `normalize_text`(공백 정리), `normalize_date`(여러 날짜 형식 통일), `normalize_rating`(1\~5 범위 검증, 8점처럼 범위 밖이면 `None`), `dedup_hash`(같은 리뷰는 같은 해시), `detect_language`(한/영 판별), `sentiment_grade`(신뢰도→5단계 등급) — 총 6건 |
-| `tests/test_pipeline_smoke.py` | 임시 SQLite DB에 샘플 CSV를 import→clean→analyze까지 실제로 돌려보고 예외 없이 끝나는지, 숫자가 정합적인지(감정 분포 합계=분석완료건수), skip 정책이 실제로 중복을 막는지 검증 — 총 2건 |
+| `tests/test_pipeline_smoke.py` | import→clean→analyze 통합 스모크 테스트, dedup skip 검증, **API 키 유무에 따른 폴백/실패 구분**(키 없으면 폴백, 키는 있는데 호출 실패하면 정직하게 "실패"로 처리), **대화형 HTML 대시보드**가 필터 UI·임베드된 리뷰데이터·내장 Chart.js를 포함해서 생성되는지 검증 — 총 8건 |
 | `tests/test_ui.py` | [사용자 편의] 한글(동아시아 넓은 문자) 표시 폭 계산, 표 정렬 패딩, 말줄임표 처리가 한/영 혼용 텍스트에서도 정확한지 검증 — 총 6건 |
-| `tests/test_main_cli.py` | [사용자 편의] `python main.py`를 실제로 서브프로세스 실행해서 환영 화면, 파일 자동 탐지, `quickstart`, `search`, `setup`(.env 자동 로드까지), `-y` 플래그가 서브커맨드 앞/뒤 어디에 있어도 동작하는지, `--all` 확인 프롬프트가 비대화형 환경에서 안전하게 거부되는지 검증 — 총 11건 |
+| `tests/test_main_cli.py` | [사용자 편의] `python main.py`를 실제로 서브프로세스 실행해서 환영 화면, 파일 자동 탐지, `quickstart`, `search`, `setup`(.env 자동 로드까지), `-y` 플래그가 서브커맨드 앞/뒤 어디에 있어도 동작하는지, `--all` 확인 프롬프트가 비대화형 환경에서 안전하게 거부되는지, **대화형 메뉴의 목록/검색 페이지 이동(n/p)**이 정상 동작하는지 검증 — 총 12건 |
 | `tests/test_envfile.py` | [사용자 편의] `.env` 파일 파싱(주석/빈줄 무시), 로드(실제 환경변수 절대 덮어쓰지 않음), 저장(중복 키 없이 갱신), `.gitignore` 자동 등록 검증 — 총 7건 |
 
-총 32건, 네트워크 연결 없이도(`ANTHROPIC_API_KEY` 없이) 규칙 기반 폴백으로 동작하므로, 테스트가
+총 39건, 네트워크 연결 없이도(`ANTHROPIC_API_KEY` 없이) 규칙 기반 폴백으로 동작하므로, 테스트가
 외부 API 상태에 영향받지 않고 항상 같은 결과를 냅니다.
 
 ---
@@ -828,13 +864,13 @@ python -m unittest discover -s tests -v
 - [x] AI 감정분석(긍정/부정/중립+신뢰도), `--all/--id/--unanalyzed`, 실패 시 로깅 후 스킵, 이미 분석된 건 기본 스킵
 - [x] AI 키워드/요약/개선제안 추출 (조건별: 기간/감정/제품/카테고리) + 불만·칭찬 유형 집계
 - [x] `list`(필터+페이지네이션+정렬) / `show` / `stats`
-- [x] matplotlib 차트 3종 이상 + 한글 폰트 + PNG 저장 (기본 3종 + 보너스 2종 = 총 5종)
+- [x] matplotlib 차트 3종 이상 + 한글 폰트 + PNG 저장 (기본 3종 + 추가구현 1종 + 보너스 3종 = 총 7종)
 - [x] 품질지표 2개 이상 + TOP N 집계 + AI 추출결과 포함 리포트, 콘솔+파일(md/txt) 저장
 - [x] CSV/JSONL/Excel 내보내기 (3종, `--sentiment`/`--rating-min`/`--category` 필터링)
 - [x] `config.json` 설정 관리 (API 키 환경변수명, dedup 정책, 시각화 옵션) + `logging`(INFO/WARNING/ERROR)
 - [x] SQLite 영구 저장 (메모리만 사용 X)
 - [x] 4개 이상 모듈 분리 (총 16개 모듈 + 테스트 5개 파일)
-- [x] 샘플 데이터 30건 이상 (100건, 제품 12종 × 카테고리 6종, 한/영 혼합)
+- [x] 샘플 데이터 30건 이상 (180건, 제품 12종 × 카테고리 6종, 한/영 혼합)
 
 **보너스 과제**
 
@@ -851,7 +887,7 @@ python -m unittest discover -s tests -v
       API 키 초기설정 마법사(`setup` + `.env` 자동 로드), 키워드 자유검색(`search`),
       색상 상태 메시지·다음 단계 힌트, 파일 자동 탐지, 진행률 바, 재분석 확인 프롬프트,
       한글 정렬이 깨지지 않는 표 출력 (17절 참고, 외부 라이브러리 불필요)
-- [x] 자동 테스트 32건 (`tests/`, 단위+통합+CLI 서브프로세스 테스트 포함)
+- [x] 자동 테스트 39건 (`tests/`, 단위+통합+CLI 서브프로세스+대화형 대시보드 테스트 포함)
 - [x] 잘못된 입력/손상된 파일/예상치 못한 오류에 대한 견고한 예외 처리
 - [x] 별점 범위(`--rating-min/max`), 언어(`--language`) 필터 등 조회 옵션 확장
 
@@ -973,10 +1009,10 @@ python main.py
 넘길 수 있습니다.
 
 ```
-── 리뷰 목록 (감정: 전체, 1/10 페이지, 총 100건) ──
+── 리뷰 목록 (감정: 전체, 1/10 페이지, 총 180건) ──
 ...
 페이지 이동 (1/10) — n=다음, p=이전, 엔터=그만: n
-── 리뷰 목록 (감정: 전체, 2/10 페이지, 총 100건) ──
+── 리뷰 목록 (감정: 전체, 2/10 페이지, 총 180건) ──
 ```
 
 ### 17-3. `python main.py quickstart` — 원클릭 파이프라인
@@ -996,7 +1032,7 @@ python main.py quickstart --no-html             # HTML 대시보드는 생략
 바로 다음에 뭘 실행하면 좋을지 힌트가 따라옵니다.
 
 ```
-✔ 정제 완료: 신규 100건, 갱신 0건
+✔ 정제 완료: 신규 180건, 갱신 0건
 💡 다음 단계: python main.py analyze --unanalyzed  (AI로 감정을 분석합니다)
 ```
 
@@ -1097,9 +1133,9 @@ ANTHROPIC_API_KEY 입력 (건너뛰려면 엔터): sk-ant-...
 $ python main.py import --file sample_data/reviews_sample.csv
 
 [INFO] 파일 로드: sample_data/reviews_sample.csv
-[INFO] 총 100건 감지, 유효 100건, 스킵 0건 (중복/필수필드 누락, 정책=skip)
+[INFO] 총 180건 감지, 유효 180건, 스킵 0건 (중복/필수필드 누락, 정책=skip)
 [INFO] raw 저장소에 저장 완료
-✔ 100건 가져오기 완료
+✔ 180건 가져오기 완료
 💡 다음 단계: python main.py clean  (가져온 데이터를 정제합니다)
 ```
 
@@ -1108,9 +1144,9 @@ $ python main.py import --file sample_data/reviews_sample.csv
 ```
 $ python main.py clean
 
-[INFO] 정제 대상 원본 리뷰: 100건
-[INFO] 정제 완료: 신규 100건, 갱신 0건, 짧은 리뷰 제외 0건, 중복 스킵 0건
-✔ 정제 완료: 신규 100건, 갱신 0건
+[INFO] 정제 대상 원본 리뷰: 180건
+[INFO] 정제 완료: 신규 180건, 갱신 0건, 짧은 리뷰 제외 0건, 중복 스킵 0건
+✔ 정제 완료: 신규 180건, 갱신 0건
 💡 다음 단계: python main.py analyze --unanalyzed  (AI로 감정을 분석합니다)
 ```
 
@@ -1203,14 +1239,14 @@ $ python main.py quickstart
 각자 한 구간씩 처음부터 끝까지 책임지는 방식으로 작업했습니다. (2번 감정분석과 3번
 키워드추출은 둘 다 "AI 연동"이라는 같은 성격이라 한 사람이 함께 맡았습니다.)
 
-## 한눈에 보는 역할 분담
+### 한눈에 보는 역할 분담
 
-| 담당 | 역할명 | 담당 요구사항 (과제 문서 기준) 
-|---|---|---|
-| **이관주** | 데이터 수집·정제 | 1. 리뷰 데이터 수집 및 저장 
-| **김외진** | AI 연동 | 2. AI 기반 감정 분석 / 3. AI 기반 키워드·요약 추출 
-| **김주영** | 시각화·리포트 | 5. 대시보드 시각화 및 리포트 생성 (+보너스 3개) 
-| **김찬욱** | 조회·내보내기·CLI 통합 | 4. 데이터 조회 및 검색 + CLI 설계/통합 
+| 담당 | 역할명 | 담당 요구사항 (과제 문서 기준) | 담당 파일 수 | 코드 라인 수 |
+|---|---|---|---|---|
+| **이관주** | 데이터 수집·정제 | 1. 리뷰 데이터 수집 및 저장 | 5개 | 650줄 |
+| **김외진** | AI 연동 | 2. AI 기반 감정 분석 / 3. AI 기반 키워드·요약 추출 | 5개 | 502줄 |
+| **김주영** | 시각화·리포트 | 5. 대시보드 시각화 및 리포트 생성 (+보너스 3개) | 6개 | 1,488줄 |
+| **김찬욱** | 조회·내보내기·CLI 통합 | 4. 데이터 조회 및 검색 + CLI 설계/통합 | 7개 | 1,327줄 |
 
 > 💡 코드 라인 수는 참고용입니다. `main.py`(CLI 전체 조립)나 `reporter.py`(리포트+HTML
 > 생성)처럼 반복적인 골격 코드가 많은 파일은 줄 수는 많아도 개념적 난이도는 다른
@@ -1219,7 +1255,7 @@ $ python main.py quickstart
 
 ---
 
-## 이관주 — 데이터 수집·정제 담당
+### 이관주 — 데이터 수집·정제 담당
 
 **한 일**: 리뷰 파일을 읽어와서, 이상한 데이터를 걸러내고, 저장소에 정리해서 넣는
 파이프라인의 "입구" 전체를 담당했습니다.
@@ -1231,14 +1267,14 @@ $ python main.py quickstart
 | `src/db.py` | SQLite 스키마 설계, raw_reviews/clean_reviews 테이블 CRUD |
 | `src/utils.py` | 텍스트·날짜·별점 정규화, 중복 판별 해시, 언어 감지 등 공통 함수 |
 | `tests/test_utils.py` | 정규화 함수 단위 테스트 6건 |
-| `sample_data/reviews_sample.csv` | 샘플 리뷰 100건(제품 12종·카테고리 6종) 제작 |
+| `sample_data/reviews_sample.csv` | 샘플 리뷰 180건(제품 12종·카테고리 6종, 제품당 15건 균등배분) 제작 |
 
 **충족한 요구사항**: CSV/Excel 수집, raw/clean 저장소 분리, dedup(skip/upsert),
-정제 6대 규칙, SQLite 영구저장, 샘플데이터 30건 이상(100건 제작)
+정제 6대 규칙, SQLite 영구저장, 샘플데이터 30건 이상(180건, 제품당 15건 균등배분)
 
 ---
 
-## 김외진 — AI 연동 담당 (감정분석 + 키워드/요약 추출)
+### 김외진 — AI 연동 담당 (감정분석 + 키워드/요약 추출)
 
 **한 일**: Claude API를 직접 호출해서 리뷰의 감정을 판정하고, 여러 리뷰를 모아
 키워드·요약·개선안을 뽑아내는 AI 관련 로직 전체를 담당했습니다.
@@ -1257,26 +1293,29 @@ API 실패 시 로깅 후 스킵, 키워드/요약/개선제안 4항목 추출, 
 
 ---
 
-## 김주영 — 시각화·리포트 담당 (+ 보너스 3개)
+### 김주영 — 시각화·리포트 담당 (+ 보너스 3개)
 
 **한 일**: 집계된 숫자를 차트로 그리고, 품질지표·TOP N이 담긴 종합 리포트를 만드는
 "출력" 파이프라인을 담당했습니다. 보너스 과제 4개 중 3개도 이쪽에서 구현했습니다.
 
 | 파일 | 역할 |
 |---|---|
-| `src/visualizer.py` | `dashboard` 커맨드의 차트 6종 (matplotlib, 한글 폰트 적용) |
-| `src/reporter.py` | 콘솔+파일(MD/TXT) 리포트, [보너스] HTML 단일 대시보드 |
+| `src/visualizer.py` | `dashboard` 커맨드의 차트 7종 (matplotlib, 한글 폰트 적용) |
+| `src/reporter.py` | 콘솔+파일(MD/TXT) 리포트, [보너스] 카테고리/제품 필터가 되는 대화형 HTML 대시보드 |
+| `src/dashboard_interactive.js` | HTML 대시보드 필터/차트 렌더링 자바스크립트 |
+| `src/vendor/chart.umd.js` | Chart.js 내장(오프라인 작동용) |
 | `src/alerts.py` | [보너스] 최근 N일 부정 리뷰 급증 알림 |
 | `src/compare.py` | [보너스] 제품/카테고리별 비교 분석 |
-| `tests/test_pipeline_smoke.py` | import\~analyze 전체 파이프라인 통합(스모크) 테스트 2건 |
+| `tests/test_pipeline_smoke.py` | 파이프라인 통합(스모크) 테스트 + 대화형 HTML 대시보드 생성 검증 — 총 8건 |
 
 **충족한 요구사항**: matplotlib 차트 3종 이상(감정분포/시간별추이/별점-감정상관관계,
-실제 6종 구현), 한글 폰트 적용, PNG 저장, 품질지표 2개 이상, TOP N 집계, AI 추출결과
-포함, 콘솔+파일 저장, 보너스 ②감정변화알림 ③HTML대시보드 ④제품/카테고리비교분석
+실제 7종 구현), 한글 폰트 적용, PNG 저장, 품질지표 2개 이상, TOP N 집계, AI 추출결과
+포함, 콘솔+파일 저장, 보너스 ②감정변화알림 ③카테고리/제품 필터가 되는 HTML
+대시보드(Chart.js 내장, 오프라인 작동) ④제품/카테고리비교분석
 
 ---
 
-## 김찬욱 — 데이터 조회·내보내기·CLI 통합 담당
+### 김찬욱 — 데이터 조회·내보내기·CLI 통합 담당
 
 **한 일**: 저장된 데이터를 검색/조회하고 엑셀 등으로 내보내는 기능, 그리고 다른 세 명이
 만든 모듈을 하나의 CLI 프로그램으로 묶는 조립 작업을 담당했습니다.
@@ -1289,7 +1328,7 @@ API 실패 시 로깅 후 스킵, 키워드/요약/개선제안 4항목 추출, 
 | `src/ui.py` | 터미널 색상 메시지·표·진행률바·확인프롬프트 (외부 라이브러리 없이 구현) |
 | `src/logger_setup.py` | logging 모듈 설정 (INFO/WARNING/ERROR, 콘솔+파일 동시 기록) |
 | `tests/test_ui.py` | 한글 표시 폭 계산 등 UI 로직 테스트 6건 |
-| `tests/test_main_cli.py` | 실제 서브프로세스로 CLI 전체를 실행해보는 통합 테스트 11건 |
+| `tests/test_main_cli.py` | 실제 서브프로세스로 CLI 전체를 실행해보는 통합 테스트(대화형 메뉴 페이지 이동 포함) 12건 |
 
 **충족한 요구사항**: argparse 기반 서브커맨드 CLI, list 필터링(감정/별점/기간)+
 페이지네이션, show 상세조회, stats 통계요약, CSV/JSONL/Excel 내보내기+필터링,
@@ -1298,18 +1337,18 @@ config.json 기반 설정 관리, INFO/WARNING/ERROR 로깅, 코드 4개 이상 
 
 ---
 
-## 다같이 한 일 (통합 작업)
+### 다같이 한 일 (통합 작업)
 
 - **전체 파이프라인 통합 테스트**: 4명 각자 모듈을 완성한 뒤, `python main.py quickstart`로
   전체 흐름(가져오기→정제→분석→추출→대시보드)이 한 번에 끊김 없이 도는지 다같이 확인
-- **자동 테스트 전체 실행**: `python -m unittest discover -s tests -v` — 총 37건 전부 통과 확인
+- **자동 테스트 전체 실행**: `python -m unittest discover -s tests -v` — 총 39건 전부 통과 확인
 - **README.md 작성 및 검토**: 각자 담당 파트를 설명하는 절을 작성하고 서로 교차 검토
 - **GitHub 업로드 및 최종 점검**: 레포 구조 정리, 스크린샷 첨부, 실행 결과 확인
 
-## 실행 방법
+### 실행 방법
 
-전체 실행 방법과 명령어별 상세 설명은 프로젝트 루트의 `README.md`를 참고하세요.
-가장 빠르게 확인하려면:
+전체 실행 방법과 명령어별 상세 설명은 위 1절(5분 안에 실행해보기)과 5절(커맨드
+16개 완전 정복)을 참고하세요. 가장 빠르게 확인하려면:
 
 ```bash
 pip install -r requirements.txt

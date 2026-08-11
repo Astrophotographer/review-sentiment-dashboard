@@ -69,6 +69,71 @@ class TestPipelineSmoke(unittest.TestCase):
         self.assertEqual(first_count, second_count, "skip 정책에서는 재수입해도 건수가 늘지 않아야 한다")
 
 
+class TestInteractiveHtmlDashboard(unittest.TestCase):
+    """[회귀 테스트] 카테고리/제품 필터가 있는 대화형 HTML 대시보드가 실제로
+    필요한 요소(필터 select, 임베드된 리뷰 데이터, 내장 Chart.js)를 전부 포함해서
+    생성되는지 검증한다. 실제 브라우저 없이 생성된 HTML 텍스트만 검사한다
+    (브라우저 상호작용 검증은 개발 중 Playwright로 별도 수동 확인함)."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.config = {
+            "ai": {"provider": "anthropic", "api_key_env": "ANTHROPIC_API_KEY_NOT_SET_FOR_TEST",
+                   "sentiment_model": "x", "extract_model": "x", "max_tokens": 100, "request_timeout_sec": 5},
+            "dedup_policy": "skip",
+            "cleaning": {"min_review_length": 5},
+            "storage": {"db_path": os.path.join(self.tmp_dir, "test.db")},
+            "logging": {"log_dir": os.path.join(self.tmp_dir, "logs"), "level": "INFO"},
+            "sentiment_grade": {"strong_threshold": 0.75},
+        }
+        self.logger = setup_logger(self.config)
+        self.db = Database(self.config["storage"]["db_path"])
+        self.ai_client = AIClient(self.config, self.logger)
+        csv_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sample_data", "reviews_sample.csv",
+        )
+        ingest.import_file(self.db, self.config, self.logger, csv_path)
+        cleaner.clean_all(self.db, self.config, self.logger)
+        analyzer.analyze_reviews(self.db, self.ai_client, self.logger, target="unanalyzed", show_progress=False)
+
+    def tearDown(self):
+        self.db.close()
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_html_dashboard_contains_filter_elements_and_embedded_data(self):
+        from src import reporter
+        path = reporter.build_html_dashboard(self.db, [], None, self.tmp_dir)
+        self.assertTrue(os.path.exists(path))
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+
+        # 카테고리/제품 필터 UI가 있어야 한다
+        self.assertIn('id="catFilter"', html)
+        self.assertIn('id="prodFilter"', html)
+        # 리뷰 데이터가 브라우저에서 다시 집계할 수 있게 통째로 임베드되어야 한다
+        self.assertIn("const ALL_REVIEWS", html)
+        # Chart.js가 CDN이 아니라 파일 안에 그대로 내장되어 오프라인에서도 동작해야 한다
+        self.assertNotIn("cdn.jsdelivr.net/npm/chart.js", html)
+        self.assertNotIn("cdnjs.cloudflare.com", html)
+        self.assertIn("Chart.js v4.4.1", html, "Chart.js 본체가 인라인으로 삽입되어 있어야 한다")
+        # 제품이 하나로 좁혀졌을 때 비교 차트를 숨기는 로직이 포함되어 있어야 한다
+        self.assertIn("toggleComparisonCharts", html)
+
+    def test_embedded_review_payload_matches_db_row_count(self):
+        from src import reporter
+        import json as _json
+        path = reporter.build_html_dashboard(self.db, [], None, self.tmp_dir)
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        start = html.index("const ALL_REVIEWS = ") + len("const ALL_REVIEWS = ")
+        end = html.index(";\n", start)
+        payload = _json.loads(html[start:end])
+        self.assertEqual(len(payload), len(self.db.get_all_clean()))
+        self.assertIn("product", payload[0])
+        self.assertIn("category", payload[0])
+        self.assertIn("sentiment", payload[0])
+
+
 class TestAIFailureVsFallback(unittest.TestCase):
     """[회귀 테스트] API 키가 아예 없을 때(의도된 폴백)와, 키는 있는데 호출 자체가
     실패할 때(크레딧 부족/인증오류 등, 진짜 실패)를 구분하는지 검증한다.

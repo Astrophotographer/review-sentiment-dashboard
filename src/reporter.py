@@ -9,7 +9,6 @@
 """
 import os
 import json
-import base64
 from datetime import datetime
 from collections import Counter
 from .utils import SENTIMENT_GRADES, sentiment_grade
@@ -168,44 +167,55 @@ _POSITIVE = "#1FAF6B"
 _NEUTRAL = "#9BA3B4"
 _NEGATIVE = "#E5484D"
 
-_CHART_TITLES = {
-    "sentiment_distribution": ("감정 분포", "리뷰가 긍정/중립/부정으로 어떻게 나뉘는지"),
-    "sentiment_trend": ("시간별 감정 추이", "날짜별 긍정·중립·부정 리뷰 건수 변화"),
-    "rating_sentiment_matrix": ("별점-감정 상관관계", "별점별로 감정이 어떻게 분포하는지"),
-    "sentiment_grade": ("감정 점수 분포 (1~5점)", "신뢰도까지 반영한 감정 강도 등급"),
-    "product_comparison": ("제품별 비교", "제품별 평균 별점과 긍정 비율"),
-    "language_distribution": ("다국어 리뷰 분석", "언어(한/영)별 리뷰 수와 긍정 비율"),
-}
+def _all_reviews_payload(db):
+    """대화형 대시보드가 브라우저에서 카테고리/제품별로 다시 집계할 수 있도록,
+    분석된 리뷰 전체를 가벼운 JSON으로 직렬화한다 (원문 텍스트는 제외하고
+    차트 계산에 필요한 필드만 담아 파일 용량을 아낀다)."""
+    rows = db.get_all_clean()
+    payload = []
+    for r in rows:
+        payload.append({
+            "id": r["id"],
+            "product": r["product"],
+            "category": r["category"],
+            "sentiment": r["sentiment"],
+            "confidence": r["confidence"],
+            "rating": r["rating"],
+            "date": r["review_date"],
+            "language": r["language"],
+        })
+    return payload
 
 
-def _img_to_base64(path):
-    if not path or not os.path.exists(path):
-        return ""
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
+def _load_vendor_chartjs():
+    """Chart.js를 CDN이 아니라 프로젝트에 내장된 파일에서 읽어와 HTML에 그대로
+    삽입한다. 인터넷 연결 없이 오프라인에서 열어도 차트가 정상적으로 그려지게
+    하기 위함이다 (단일 HTML 파일 하나로 완결되어야 한다는 취지에 맞춤)."""
+    vendor_path = os.path.join(os.path.dirname(__file__), "vendor", "chart.umd.js")
+    with open(vendor_path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _load_dashboard_js(threshold: float, reviews_json: str) -> str:
+    js_path = os.path.join(os.path.dirname(__file__), "dashboard_interactive.js")
+    with open(js_path, encoding="utf-8") as f:
+        template = f.read()
+    return template.replace("__THRESHOLD__", str(threshold)).replace("__ALL_REVIEWS_JSON__", reviews_json)
 
 
 def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.75):
+    """[보너스] 카테고리/제품을 골라서 그 조건에 맞는 차트만 다시 그려주는
+    대화형 HTML 대시보드를 생성한다. matplotlib PNG(정적 이미지, chart_paths)는
+    그대로 output/ 폴더에 별도로 저장되어 있으므로(요구사항 충족용), 이 HTML은
+    그 PNG를 그대로 붙여넣는 대신 Chart.js로 브라우저에서 직접 다시 그린다.
+    리뷰 데이터를 통째로 파일 안에 넣어두고(서버 없이) 자바스크립트로 필터링만
+    하는 방식이라, "실시간 웹 대시보드 금지" 제약과도 충돌하지 않는다
+    (매번 새로 만드는 정적 스냅샷 파일 1개, 서버/DB 연결 없음)."""
     stats = db.get_stats()
     quality = _quality_metrics(db)
     grade = _grade_metrics(db, threshold)
     keywords = _top_keywords(db)
-    total, analyzed = stats["total"], stats["analyzed"]
-    pos = stats["sentiment_dist"].get("positive", 0)
-    pos_ratio = (pos / analyzed * 100) if analyzed else 0.0
-
-    chart_imgs_html = ""
-    for p in chart_paths:
-        b64 = _img_to_base64(p)
-        if not b64:
-            continue
-        key = os.path.splitext(os.path.basename(p))[0]
-        title, desc = _CHART_TITLES.get(key, (key, ""))
-        chart_imgs_html += f"""
-            <figure class="chart-card">
-              <img src="data:image/png;base64,{b64}" alt="{title}" />
-              <figcaption>{desc}</figcaption>
-            </figure>"""
+    reviews = _all_reviews_payload(db)
 
     if alert_result and alert_result.get("triggered"):
         signal_cls, signal_text = "signal-warn", (
@@ -241,29 +251,12 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
 
     suggestions_html = "".join(f"<li>{s}</li>" for s in keywords["suggestions"]) or "<li>-</li>"
 
-    lang_labels = {"ko": "한국어", "en": "영어"}
-    lang_dist = stats.get("language_dist", {})
-    lang_colors = [_NAVY, _ACCENT, _AMBER, _NEUTRAL]
-    lang_segments, lang_legend = "", ""
-    for i, (lang, c) in enumerate(sorted(lang_dist.items(), key=lambda x: -x[1])):
-        pct = (c / total * 100) if total else 0
-        color = lang_colors[i % len(lang_colors)]
-        lang_segments += f'<div style="width:{pct:.2f}%;background:{color}" title="{lang_labels.get(lang, lang)} {pct:.1f}%"></div>'
-        lang_legend += f'<span class="lang-legend-item"><i style="background:{color}"></i>{lang_labels.get(lang, lang)} {c}건 ({pct:.1f}%)</span>'
-    if not lang_dist:
-        lang_segments = f'<div style="width:100%;background:{_BORDER}"></div>'
-        lang_legend = '<span class="empty">언어 데이터가 없습니다</span>'
-
     now_str = datetime.now().strftime("%Y년 %m월 %d일 %H:%M")
+    reviews_json = json.dumps(reviews, ensure_ascii=False, default=str)
+    chartjs_source = _load_vendor_chartjs()
+    dashboard_js = _load_dashboard_js(threshold, reviews_json)
 
-    html = f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>고객 리뷰 감정 분석 대시보드</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" crossorigin>
-<style>
+    css = f"""
   :root {{
     --ink:{_INK}; --muted:{_MUTED}; --border:{_BORDER}; --paper:{_PAPER}; --surface:#FFFFFF;
     --navy:{_NAVY}; --accent:{_ACCENT}; --amber:{_AMBER};
@@ -275,31 +268,41 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     font-family:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
     -webkit-font-smoothing:antialiased;
   }}
-  .header {{
-    background:linear-gradient(135deg,#0F1526 0%,var(--navy) 100%);
-    color:#fff; padding:36px 40px 30px;
-  }}
-  .eyebrow {{
-    font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
-    color:var(--accent); margin-bottom:10px;
-  }}
+  .header {{ background:linear-gradient(135deg,#0F1526 0%,var(--navy) 100%); color:#fff; padding:36px 40px 30px; }}
+  .eyebrow {{ font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }}
   .header-row {{ display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; }}
   h1 {{ font-size:26px; font-weight:800; margin:0 0 6px; letter-spacing:-0.01em; }}
   .meta {{ color:rgba(255,255,255,.55); font-size:13px; }}
-  .signal {{
-    display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600;
-    padding:8px 14px; border-radius:999px; white-space:nowrap;
-  }}
+  .signal {{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }}
   .signal-ok {{ background:rgba(31,175,107,.16); color:#4ADE94; }}
   .signal-warn {{ background:rgba(229,72,77,.18); color:#FF8A8E; }}
 
-  .wrap {{ max-width:1120px; margin:0 auto; padding:28px 40px 60px; }}
+  .wrap {{ max-width:1180px; margin:0 auto; padding:28px 40px 60px; }}
+
+  .filter-bar {{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px 18px; margin-bottom:22px;
+  }}
+  .filter-bar label {{ font-size:12px; font-weight:700; color:var(--muted); }}
+  .filter-bar select {{
+    font-family:inherit; font-size:13.5px; padding:8px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--ink); min-width:160px;
+  }}
+  .filter-bar button {{
+    font-family:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--ink); cursor:pointer;
+  }}
+  .filter-bar button:hover {{ background:var(--paper); }}
+  .filter-current {{ margin-left:auto; font-size:13px; color:var(--muted); }}
+  .filter-current b {{ color:var(--ink); }}
+  .empty-note {{
+    display:none; text-align:center; color:var(--muted); font-size:13.5px;
+    padding:14px; background:var(--surface); border:1px dashed var(--border); border-radius:10px; margin-bottom:20px;
+  }}
 
   .kpi-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:30px; }}
-  .kpi {{
-    background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--navy);
-    border-radius:10px; padding:16px 18px; box-shadow:0 1px 2px rgba(16,20,35,.04);
-  }}
+  .kpi {{ background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--navy); border-radius:10px; padding:16px 18px; box-shadow:0 1px 2px rgba(16,20,35,.04); }}
   .kpi .label {{ font-size:12px; color:var(--muted); font-weight:600; margin-bottom:6px; }}
   .kpi .value {{ font-size:26px; font-weight:800; letter-spacing:-0.02em; }}
   .kpi.c-total {{ border-left-color:var(--navy); }}
@@ -313,8 +316,10 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
 
   .charts {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:16px; }}
   .chart-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin:0; }}
-  .chart-card img {{ width:100%; border-radius:6px; display:block; }}
-  .chart-card figcaption {{ font-size:12.5px; color:var(--muted); margin-top:10px; text-align:center; }}
+  .chart-card h3 {{ font-size:13.5px; margin:0 0 4px; }}
+  .chart-card .desc {{ font-size:12px; color:var(--muted); margin-bottom:12px; }}
+  .chart-card canvas {{ max-height:280px; }}
+  .compare-note {{ display:none; font-size:12.5px; color:var(--muted); padding:10px 4px; }}
 
   .panel {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:22px; }}
   .cols {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
@@ -324,10 +329,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .pill-neg {{ background:rgba(229,72,77,.1); color:#C7333A; border:1px solid rgba(229,72,77,.25); }}
   .empty {{ color:var(--muted); font-size:13px; }}
 
-  .quote {{
-    border-left:3px solid var(--accent); background:rgba(255,90,60,.05);
-    padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; line-height:1.6; margin:16px 0;
-  }}
+  .quote {{ border-left:3px solid var(--accent); background:rgba(255,90,60,.05); padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; line-height:1.6; margin:16px 0; }}
   ul.suggestions {{ margin:10px 0 0; padding-left:18px; font-size:13.5px; line-height:1.9; color:var(--ink); }}
 
   .topic-row {{ padding:12px 0; border-bottom:1px solid var(--border); }}
@@ -337,11 +339,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .topic-bar {{ background:var(--accent); height:100%; border-radius:6px; }}
   .topic-examples {{ font-size:12px; color:var(--muted); margin-top:6px; }}
 
-  .lang-bar {{ display:flex; width:100%; height:14px; border-radius:999px; overflow:hidden; background:var(--border); margin-bottom:12px; }}
-  .lang-legend {{ display:flex; flex-wrap:wrap; gap:14px; font-size:13px; color:var(--ink); }}
-  .lang-legend-item {{ display:flex; align-items:center; gap:6px; }}
-  .lang-legend-item i {{ width:10px; height:10px; border-radius:3px; display:inline-block; }}
-
+  .ai-note {{ font-size:12px; color:var(--muted); margin-top:14px; }}
   .grid-2 {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }}
   footer {{ text-align:center; font-size:12px; color:var(--muted); margin-top:44px; }}
 
@@ -349,8 +347,18 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     .header {{ padding:26px 20px; }}
     .wrap {{ padding:22px 20px 40px; }}
     .cols, .grid-2 {{ grid-template-columns:1fr; }}
+    .filter-current {{ margin-left:0; width:100%; }}
   }}
-</style>
+"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>고객 리뷰 감정 분석 대시보드</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" crossorigin>
+<style>{css}</style>
 </head>
 <body>
   <div class="header">
@@ -358,60 +366,65 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     <div class="header-row">
       <div>
         <h1>고객 리뷰 감정 분석 대시보드</h1>
-        <div class="meta">생성일시 {now_str}</div>
+        <div class="meta">생성일시 {now_str} · 카테고리/제품을 선택하면 아래 차트가 그 조건으로 다시 그려집니다</div>
       </div>
       {signal_html}
     </div>
   </div>
 
   <div class="wrap">
+    <div class="filter-bar">
+      <label for="catFilter">카테고리</label>
+      <select id="catFilter"><option value="__all__">전체 카테고리</option></select>
+      <label for="prodFilter">제품</label>
+      <select id="prodFilter"><option value="__all__">전체 제품</option></select>
+      <button id="resetFilterBtn" type="button">필터 초기화</button>
+      <div class="filter-current">보는 중: <b id="filterLabel">전체</b></div>
+    </div>
+    <div class="empty-note" id="emptyNote">선택한 조건에 해당하는 리뷰가 없습니다.</div>
+
     <div class="kpi-grid">
-      <div class="kpi c-total"><div class="label">총 리뷰 수</div><div class="value">{total}건</div></div>
-      <div class="kpi c-rate"><div class="label">분석 완료율</div><div class="value">{quality['completion_rate']}%</div></div>
-      <div class="kpi c-pos"><div class="label">긍정 비율</div><div class="value">{pos_ratio:.1f}%</div></div>
-      <div class="kpi c-rating"><div class="label">평균 별점</div><div class="value">{(stats['avg_rating'] or 0):.2f}</div></div>
-      <div class="kpi c-grade"><div class="label">평균 감정 점수(1~5)</div><div class="value">{grade['avg_grade']}</div></div>
-      <div class="kpi c-conf"><div class="label">평균 신뢰도</div><div class="value">{quality['avg_confidence']}</div></div>
+      <div class="kpi c-total"><div class="label">총 리뷰 수</div><div class="value" id="kpiTotal">0건</div></div>
+      <div class="kpi c-rate"><div class="label">분석 완료율</div><div class="value" id="kpiRate">0%</div></div>
+      <div class="kpi c-pos"><div class="label">긍정 비율</div><div class="value" id="kpiPos">0%</div></div>
+      <div class="kpi c-rating"><div class="label">평균 별점</div><div class="value" id="kpiRating">0</div></div>
+      <div class="kpi c-grade"><div class="label">평균 감정 점수(1~5)</div><div class="value" id="kpiGrade">0</div></div>
+      <div class="kpi c-conf"><div class="label">평균 신뢰도</div><div class="value" id="kpiConf">0</div></div>
     </div>
 
-    <div class="section-title">시각화</div>
-    <div class="charts">{chart_imgs_html}</div>
+    <div class="section-title">시각화 (선택한 카테고리/제품 기준)</div>
+    <div class="charts">
+      <div class="chart-card"><h3>감정 분포</h3><div class="desc">긍정/중립/부정 비율</div><canvas id="chartDonut"></canvas></div>
+      <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 건수 변화</div><canvas id="chartTrend"></canvas></div>
+      <div class="chart-card"><h3>별점-감정 상관관계</h3><div class="desc">별점별 감정 분포</div><canvas id="chartRating"></canvas></div>
+      <div class="chart-card"><h3>감정 점수 분포 (1~5점)</h3><div class="desc">신뢰도까지 반영한 감정 강도</div><canvas id="chartGrade"></canvas></div>
+      <div class="chart-card" id="cardProductComparison"><h3>제품별 비교</h3><div class="desc">제품별 긍정 비율</div><canvas id="chartProductComparison"></canvas></div>
+      <div class="chart-card" id="cardProductBreakdown"><h3>제품별 감정 분포</h3><div class="desc">제품마다 긍정/중립/부정 실제 건수</div><canvas id="chartProductBreakdown"></canvas></div>
+      <div class="chart-card"><h3>다국어 리뷰 분석</h3><div class="desc">언어(한/영)별 리뷰 수</div><canvas id="chartLanguage"></canvas></div>
+    </div>
+    <div class="compare-note" id="compareHiddenNote">💡 특정 제품을 선택하면 "제품별 비교/제품별 감정 분포" 차트는 비교 대상이 없어 숨겨집니다.</div>
 
     <div class="section-title">AI 키워드 &amp; 인사이트</div>
     <div class="panel">
       <div class="cols">
-        <div>
-          <h3>👍 긍정 키워드</h3>
-          <div>{pos_kw_html}</div>
-        </div>
-        <div>
-          <h3>👎 부정 키워드</h3>
-          <div>{neg_kw_html}</div>
-        </div>
+        <div><h3>👍 긍정 키워드</h3><div>{pos_kw_html}</div></div>
+        <div><h3>👎 부정 키워드</h3><div>{neg_kw_html}</div></div>
       </div>
-
       <div class="quote">{keywords['summary']}</div>
-
       <div class="grid-2">
-        <div>
-          <h3 style="font-size:13px;margin:0 0 8px;">주요 불만·칭찬 유형</h3>
-          {topic_html}
-        </div>
-        <div>
-          <h3 style="font-size:13px;margin:0 0 8px;">개선 제안</h3>
-          <ul class="suggestions">{suggestions_html}</ul>
-        </div>
+        <div><h3 style="font-size:13px;margin:0 0 8px;">주요 불만·칭찬 유형</h3>{topic_html}</div>
+        <div><h3 style="font-size:13px;margin:0 0 8px;">개선 제안</h3><ul class="suggestions">{suggestions_html}</ul></div>
       </div>
+      <div class="ai-note">💡 이 섹션은 `extract` 커맨드를 실행했을 때의 조건을 그대로 보여줍니다 (위 카테고리/제품
+      필터를 바꿔도 여기는 자동으로 다시 계산되지 않아요 — 특정 제품의 AI 키워드가 필요하면
+      <code>python main.py extract --product "제품명"</code>을 다시 실행하세요).</div>
     </div>
 
-    <div class="section-title">언어 분포 · 보너스: 다국어 지원</div>
-    <div class="panel">
-      <div class="lang-bar">{lang_segments}</div>
-      <div class="lang-legend">{lang_legend}</div>
-    </div>
-
-    <footer>Customer Review Sentiment Dashboard · Generated locally from clean_reviews</footer>
+    <footer>Customer Review Sentiment Dashboard · Generated locally from clean_reviews · Chart.js 내장(오프라인 작동)</footer>
   </div>
+
+<script>{chartjs_source}</script>
+<script>{dashboard_js}</script>
 </body>
 </html>"""
 

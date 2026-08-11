@@ -266,6 +266,49 @@ def chart_product_comparison(db, output_dir, dpi=150):
     return _save(fig, os.path.join(output_dir, "product_comparison.png"), dpi)
 
 
+# ── 4-1. [보너스] 제품별 감정 분포: 누적 가로 막대 차트 ────────────────────
+def chart_product_sentiment_breakdown(db, output_dir, dpi=150):
+    """제품별 비교(평균별점/긍정비율)만으로는 "제품마다 긍정/중립/부정이 실제로
+    몇 건씩인지"가 안 보여서, rating_sentiment_matrix와 같은 방식으로 제품별
+    누적 막대를 추가한다. 제품 12개를 도넛 12장으로 나누는 대신, 막대 하나에
+    쌓아서 한눈에 비교할 수 있게 한다."""
+    rows = db.get_all_clean()
+    by_product = defaultdict(lambda: {"positive": 0, "neutral": 0, "negative": 0})
+    for r in rows:
+        if r["product"] and r["sentiment"]:
+            by_product[r["product"]][r["sentiment"]] += 1
+
+    products = list(by_product.keys())
+    if not products:
+        return None
+
+    def total(p):
+        d = by_product[p]
+        return d["positive"] + d["neutral"] + d["negative"]
+
+    products.sort(key=lambda p: by_product[p]["positive"] / total(p) if total(p) else 0)
+
+    fig, ax = plt.subplots(figsize=(9.5, max(3.2, 0.5 * len(products) + 1.4)))
+    left = [0] * len(products)
+    for key in ("negative", "neutral", "positive"):
+        values = [by_product[p][key] for p in products]
+        bars = ax.barh(products, values, left=left, label=SENTIMENT_LABELS_KO[key],
+                        color=PALETTE[key], edgecolor="white", linewidth=1.4, height=0.6)
+        for b, v, base in zip(bars, values, left):
+            if v > 0:
+                ax.text(base + v / 2, b.get_y() + b.get_height() / 2, str(v),
+                        ha="center", va="center", fontsize=8.5, color="white", fontweight="bold")
+        left = [l + v for l, v in zip(left, values)]
+
+    ax.set_xlabel("리뷰 수")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=3, fontsize=10)
+    ax.grid(axis="y", visible=False)
+    fig.suptitle("제품별 감정 분포", x=0.06, y=1.02, ha="left", fontsize=14,
+                 fontweight="bold", color=PALETTE["ink"])
+    fig.tight_layout(rect=[0, 0.04, 1, 0.95])
+    return _save(fig, os.path.join(output_dir, "product_sentiment_breakdown.png"), dpi)
+
+
 # ── 5. [보너스] 언어별 분포: 가로 막대 차트 ──────────────────────────────
 def chart_language_distribution(db, output_dir, dpi=150):
     rows = db.get_all_clean()
@@ -362,6 +405,10 @@ def generate_all_charts(db, config, logger):
     compare_path = chart_product_comparison(db, output_dir, dpi)
     if compare_path:
         paths.append(compare_path)
+
+    breakdown_path = chart_product_sentiment_breakdown(db, output_dir, dpi)
+    if breakdown_path:
+        paths.append(breakdown_path)
 
     lang_path = chart_language_distribution(db, output_dir, dpi)
     if lang_path:
