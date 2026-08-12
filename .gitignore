@@ -18,3 +18,7 @@ output/*.xlsx
 
 .env
 uploads/
+.vercel
+output/.vercel
+output/vercel.json
+output/index.html
