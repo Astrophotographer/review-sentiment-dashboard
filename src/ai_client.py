@@ -35,7 +35,7 @@ class AIClient:
         # extract는 키워드/요약/유형별집계 등 훨씬 긴 JSON 응답이 필요해서, analyze용
         # max_tokens를 그대로 쓰면 응답이 중간에 잘려 파싱 실패 -> 조용히 폴백되는
         # 문제가 있었다. 그래서 extract 전용으로 더 넉넉한 값을 따로 둔다.
-        self.extract_max_tokens = ai_cfg.get("extract_max_tokens", max(self.max_tokens * 2, 2048))
+        self.extract_max_tokens = ai_cfg.get("extract_max_tokens", max(self.max_tokens * 4, 4096))
         self.timeout = ai_cfg.get("request_timeout_sec", 30)
         self.available = bool(self.api_key)
         if not self.available:
@@ -163,7 +163,10 @@ class AIClient:
             "positive_keywords/negative_keywords 의 keyword는 \"배송 지연\", \"품질 불량\"처럼 "
             "단어 하나가 아니라 의미가 통하는 2~3어절 구(句)로 만들고, count는 해당 키워드가 "
             "리뷰들에서 실제로 언급된(또는 그와 같은 취지의) 횟수를 세어 넣어라. 키워드는 count 내림차순으로 정렬하라.\n"
-            "topic_breakdown 은 부정/긍정 리뷰를 유형별로 묶어 건수와 대표 키워드를 제공하는 항목이다."
+            "topic_breakdown 은 부정/긍정 리뷰를 유형별로 묶어 건수와 대표 키워드를 제공하는 항목이다.\n"
+            "응답이 너무 길어지지 않도록 반드시 지켜라: positive_keywords/negative_keywords는 "
+            "각각 최대 5개, topic_breakdown은 최대 5개 유형까지만, 각 유형의 examples는 최대 3개까지만 "
+            "포함하라. summary는 4문장을 넘기지 마라."
         )
         joined = "\n".join(f"- ({r.get('sentiment','?')}, {r.get('rating','?')}점) {r.get('review_text','')}" for r in reviews[:200])
         user_prompt = f"[분석 조건: {condition_desc}]\n리뷰 목록:\n{joined}"

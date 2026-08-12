@@ -202,8 +202,10 @@ class TestAIFailureVsFallback(unittest.TestCase):
     def test_extract_uses_larger_max_tokens_than_analyze(self):
         # extract는 analyze보다 훨씬 긴 JSON을 요구하므로, 같은 max_tokens를 쓰면
         # 응답이 중간에 잘려 파싱 실패로 이어질 수 있다. 전용 예산이 더 커야 한다.
+        # (실제로 리뷰 180건을 요약할 때 2048로도 부족했던 적이 있어 4096 이상을 요구한다.)
         client = self._client_with_key()
         self.assertGreater(client.extract_max_tokens, client.max_tokens)
+        self.assertGreaterEqual(client.extract_max_tokens, 4096)
 
     def test_extract_logs_error_when_response_is_truncated_and_unparseable(self):
         # 회귀 테스트: 응답이 200 OK로 오긴 했지만 JSON이 중간에 잘려 파싱이 실패하는
