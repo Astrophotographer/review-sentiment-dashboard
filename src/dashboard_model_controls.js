@@ -113,7 +113,8 @@
       sparkTemp.className = "spark-temp ok";
       if (spark.error) sparkTemp.title = spark.error;
     } else {
-      sparkTemp.textContent = "● 접속끊김";
+      // 아직 health 확인 전·실패 → 연결된 것처럼 보이지 않게
+      sparkTemp.textContent = "● 연결 중";
       sparkTemp.className = "spark-temp offline";
       if (spark && spark.error) sparkTemp.title = spark.error;
     }
@@ -163,13 +164,24 @@
 
   async function refresh() {
     try {
+      if (providerSel.value === "spark" && sparkTemp) {
+        sparkTemp.hidden = false;
+        sparkTemp.textContent = "● 연결 중";
+        sparkTemp.className = "spark-temp offline";
+      }
       const data = await fetchStatus();
       applyStatus(data);
       modelBar.classList.remove("offline");
     } catch (e) {
       modelBar.classList.add("offline");
       setStatus("모델 설정은 `python main.py serve` 로 열어야 동작합니다", "warn");
-      sparkTemp.hidden = true;
+      if (providerSel.value === "spark" && sparkTemp) {
+        sparkTemp.hidden = false;
+        sparkTemp.textContent = "● 연결 중";
+        sparkTemp.className = "spark-temp offline";
+      } else if (sparkTemp) {
+        sparkTemp.hidden = true;
+      }
     }
   }
 

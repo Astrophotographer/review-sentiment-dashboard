@@ -495,7 +495,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       </select>
       <label for="modelSelect">모델</label>
       <select id="modelSelect"><option value="qwen">qwen</option></select>
-      <span class="spark-temp offline" id="sparkTemp" hidden>● 접속끊김</span>
+      <span class="spark-temp offline" id="sparkTemp" hidden>● 연결 중</span>
       <button id="reanalyzeBtn" class="primary" type="button">이 모델로 재분석</button>
       <a class="compare-link" href="/compare.html">모델 비교 →</a>
       <span class="model-status" id="modelStatus">모델 설정 불러오는 중…</span>
