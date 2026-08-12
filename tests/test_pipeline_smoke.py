@@ -183,6 +183,21 @@ class TestAIFailureVsFallback(unittest.TestCase):
         )
         self.assertIn("positive_keywords", result)
 
+    def test_fallback_keywords_include_occurrence_counts(self):
+        # 과제 문서 예시("1. 빠른 배송 (23회)")처럼 키워드가 단순 문자열이 아니라
+        # {keyword, count} 형태로 나와서 TOP N 리포트에 실제 등장 횟수를 붙일 수 있어야 한다.
+        client = self._client_without_key()
+        reviews = [
+            {"review_text": "정말 좋아요 만족합니다", "sentiment": "positive", "rating": 5},
+            {"review_text": "이것도 좋아요", "sentiment": "positive", "rating": 4},
+            {"review_text": "배송이 늦어서 불편했어요", "sentiment": "negative", "rating": 2},
+        ]
+        result = client.extract_insights(reviews, "감정=전체")
+        pos = result["positive_keywords"]
+        self.assertTrue(all(isinstance(k, dict) and "keyword" in k and "count" in k for k in pos))
+        good = next(k for k in pos if k["keyword"] == "좋")
+        self.assertEqual(good["count"], 2, "'좋'이 두 리뷰에 등장했으므로 count=2 여야 한다")
+
     def test_extract_insights_falls_back_without_crashing_when_key_present_but_call_fails(self):
         # extract는 analyze와 달리 "스킵" 요구사항이 없으므로, 실패해도 대시보드가
         # 텅 비지 않도록 규칙 기반 결과로 대체한다 (다만 WARNING 로그를 남긴다).

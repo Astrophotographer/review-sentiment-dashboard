@@ -14,6 +14,17 @@ from collections import Counter
 from .utils import SENTIMENT_GRADES, sentiment_grade
 
 
+def _kw_text(item):
+    """positive_keywords/negative_keywords 항목이 새 형식({'keyword':...,'count':...})이든
+    예전 형식(그냥 문자열)이든 안전하게 키워드 텍스트만 꺼낸다 (과거에 저장된 extraction
+    결과와의 하위호환용)."""
+    return item.get("keyword", "") if isinstance(item, dict) else str(item)
+
+
+def _kw_count(item):
+    return item.get("count") if isinstance(item, dict) else None
+
+
 def _quality_metrics(db):
     rows = db.get_all_clean()
     analyzed = [r for r in rows if r["sentiment"]]
@@ -97,11 +108,15 @@ def build_report_text(db, chart_paths, alert_result=None, threshold=0.75):
     lines.append("")
     lines.append(f"[TOP {len(keywords['positive']) or 5} 긍정 키워드] (출처: {keywords['source']})")
     for i, kw in enumerate(keywords["positive"], start=1):
-        lines.append(f"{i}. {kw}")
+        count = _kw_count(kw)
+        suffix = f" ({count}회)" if count else ""
+        lines.append(f"{i}. {_kw_text(kw)}{suffix}")
     lines.append("")
     lines.append(f"[TOP {len(keywords['negative']) or 5} 부정 키워드]")
     for i, kw in enumerate(keywords["negative"], start=1):
-        lines.append(f"{i}. {kw}")
+        count = _kw_count(kw)
+        suffix = f" ({count}회)" if count else ""
+        lines.append(f"{i}. {_kw_text(kw)}{suffix}")
     lines.append("")
     lines.append("[AI 인사이트 요약]")
     lines.append(keywords["summary"])
@@ -233,7 +248,12 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     def _pills(words, cls):
         if not words:
             return '<span class="empty">추출된 키워드가 없습니다</span>'
-        return "".join(f'<span class="pill {cls}">{w}</span>' for w in words)
+        out = []
+        for w in words:
+            text, count = _kw_text(w), _kw_count(w)
+            badge = f' <b>{count}</b>' if count else ""
+            out.append(f'<span class="pill {cls}">{text}{badge}</span>')
+        return "".join(out)
 
     pos_kw_html = _pills(keywords["positive"], "pill-pos")
     neg_kw_html = _pills(keywords["negative"], "pill-neg")

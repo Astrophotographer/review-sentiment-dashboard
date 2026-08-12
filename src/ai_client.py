@@ -140,12 +140,15 @@ class AIClient:
             "너는 커머스 VOC(고객의 소리) 분석가다. 주어진 리뷰 목록을 종합 분석하여 아래 JSON 스키마로만 답하라. "
             "다른 설명 문장은 절대 포함하지 마라.\n"
             "{\n"
-            '  "positive_keywords": ["...", "..."],\n'
-            '  "negative_keywords": ["...", "..."],\n'
+            '  "positive_keywords": [{"keyword": "빠른 배송", "count": 23}, ...],\n'
+            '  "negative_keywords": [{"keyword": "배송 지연", "count": 8}, ...],\n'
             '  "summary": "전체 리뷰에 대한 2~4문장 요약",\n'
             '  "suggestions": ["개선 제안1", "개선 제안2"],\n'
             '  "topic_breakdown": [{"topic": "배송", "count": 9, "examples": ["배송 지연", "오배송"]}]\n'
             "}\n"
+            "positive_keywords/negative_keywords 의 keyword는 \"배송 지연\", \"품질 불량\"처럼 "
+            "단어 하나가 아니라 의미가 통하는 2~3어절 구(句)로 만들고, count는 해당 키워드가 "
+            "리뷰들에서 실제로 언급된(또는 그와 같은 취지의) 횟수를 세어 넣어라. 키워드는 count 내림차순으로 정렬하라.\n"
             "topic_breakdown 은 부정/긍정 리뷰를 유형별로 묶어 건수와 대표 키워드를 제공하는 항목이다."
         )
         joined = "\n".join(f"- ({r.get('sentiment','?')}, {r.get('rating','?')}점) {r.get('review_text','')}" for r in reviews[:200])
@@ -190,8 +193,8 @@ class AIClient:
                 topic_breakdown.append({"topic": topic, "count": count, "examples": hints})
 
         return {
-            "positive_keywords": [w for w, _ in pos_sorted] or ["데이터 부족"],
-            "negative_keywords": [w for w, _ in neg_sorted] or ["데이터 부족"],
+            "positive_keywords": [{"keyword": w, "count": c} for w, c in pos_sorted] or [{"keyword": "데이터 부족", "count": 0}],
+            "negative_keywords": [{"keyword": w, "count": c} for w, c in neg_sorted] or [{"keyword": "데이터 부족", "count": 0}],
             "summary": f"총 {len(reviews)}건의 리뷰를 규칙 기반으로 요약했습니다. "
                        f"(실제 AI 요약을 원하면 ANTHROPIC_API_KEY를 설정하세요.)",
             "suggestions": ["ANTHROPIC_API_KEY 설정 후 재실행하면 더 정교한 AI 인사이트를 받을 수 있습니다."],
