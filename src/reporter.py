@@ -14,6 +14,17 @@ from collections import Counter
 from .utils import SENTIMENT_GRADES, sentiment_grade
 
 
+def _kw_text(item):
+    """positive_keywords/negative_keywords 항목이 새 형식({'keyword':...,'count':...})이든
+    예전 형식(그냥 문자열)이든 안전하게 키워드 텍스트만 꺼낸다 (과거에 저장된 extraction
+    결과와의 하위호환용)."""
+    return item.get("keyword", "") if isinstance(item, dict) else str(item)
+
+
+def _kw_count(item):
+    return item.get("count") if isinstance(item, dict) else None
+
+
 def _quality_metrics(db):
     rows = db.get_all_clean()
     analyzed = [r for r in rows if r["sentiment"]]
@@ -97,11 +108,15 @@ def build_report_text(db, chart_paths, alert_result=None, threshold=0.75):
     lines.append("")
     lines.append(f"[TOP {len(keywords['positive']) or 5} 긍정 키워드] (출처: {keywords['source']})")
     for i, kw in enumerate(keywords["positive"], start=1):
-        lines.append(f"{i}. {kw}")
+        count = _kw_count(kw)
+        suffix = f" ({count}회)" if count else ""
+        lines.append(f"{i}. {_kw_text(kw)}{suffix}")
     lines.append("")
     lines.append(f"[TOP {len(keywords['negative']) or 5} 부정 키워드]")
     for i, kw in enumerate(keywords["negative"], start=1):
-        lines.append(f"{i}. {kw}")
+        count = _kw_count(kw)
+        suffix = f" ({count}회)" if count else ""
+        lines.append(f"{i}. {_kw_text(kw)}{suffix}")
     lines.append("")
     lines.append("[AI 인사이트 요약]")
     lines.append(keywords["summary"])
@@ -119,7 +134,7 @@ def build_report_text(db, chart_paths, alert_result=None, threshold=0.75):
     if stats.get("language_dist"):
         lines.append("")
         lines.append("[언어 분포] (보너스: 다국어 지원)")
-        lang_labels = {"ko": "한국어", "en": "영어"}
+        lang_labels = {"ko": "한국어", "en": "영어", "zh": "중국어"}
         for lang, c in stats["language_dist"].items():
             pct = (c / total * 100) if total else 0.0
             lines.append(f"- {lang_labels.get(lang, lang)}: {c}건 ({pct:.1f}%)")
@@ -251,7 +266,12 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     def _pills(words, cls):
         if not words:
             return '<span class="empty">추출된 키워드가 없습니다</span>'
-        return "".join(f'<span class="pill {cls}">{w}</span>' for w in words)
+        out = []
+        for w in words:
+            text, count = _kw_text(w), _kw_count(w)
+            badge = f' <b>{count}</b>' if count else ""
+            out.append(f'<span class="pill {cls}">{text}{badge}</span>')
+        return "".join(out)
 
     pos_kw_html = _pills(keywords["positive"], "pill-pos")
     neg_kw_html = _pills(keywords["negative"], "pill-neg")
@@ -409,7 +429,9 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .chart-card {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin:0; }}
   .chart-card h3 {{ font-size:13.5px; margin:0 0 4px; }}
   .chart-card .desc {{ font-size:12px; color:var(--muted); margin-bottom:12px; }}
-  .chart-card canvas {{ max-height:300px; }}
+  .chart-card canvas {{ max-height:280px; }}
+  .chart-card.dynamic-height canvas {{ max-height:none; }}
+  .chart-wrap {{ position:relative; width:100%; }}
   .chart-card {{ transition: box-shadow .2s ease; }}
   .chart-card:hover {{ box-shadow:0 4px 16px rgba(16,20,35,.06); }}
   .compare-note {{ display:none; font-size:12.5px; color:var(--muted); padding:10px 4px; }}
@@ -522,12 +544,11 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     <div class="section-title">시각화 (선택한 카테고리/제품 기준)</div>
     <div class="charts">
       <div class="chart-card"><h3>만족도 측면별 감정</h3><div class="desc">상품 · 배송 · 응대 만족도별 긍정/중립/부정</div><canvas id="chartDonut"></canvas></div>
-      <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 건수 변화</div><canvas id="chartTrend"></canvas></div>
-      <div class="chart-card"><h3>별점-감정 상관관계</h3><div class="desc">별점별 감정 분포</div><canvas id="chartRating"></canvas></div>
+      <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 3일 이동평균</div><canvas id="chartTrend"></canvas></div>
       <div class="chart-card"><h3>감정 점수 분포 (1~5점)</h3><div class="desc">신뢰도까지 반영한 감정 강도</div><canvas id="chartGrade"></canvas></div>
-      <div class="chart-card" id="cardProductComparison"><h3>제품별 비교</h3><div class="desc">제품별 긍정 비율</div><canvas id="chartProductComparison"></canvas></div>
-      <div class="chart-card" id="cardProductBreakdown"><h3>제품별 감정 분포</h3><div class="desc">제품마다 긍정/중립/부정 실제 건수</div><canvas id="chartProductBreakdown"></canvas></div>
-      <div class="chart-card"><h3>다국어 리뷰 분석</h3><div class="desc">언어(한/영)별 리뷰 수</div><canvas id="chartLanguage"></canvas></div>
+      <div class="chart-card dynamic-height" id="cardProductComparison"><h3>제품별 비교</h3><div class="desc">제품별 긍정 비율</div><div class="chart-wrap" id="wrapProductComparison"><canvas id="chartProductComparison"></canvas></div></div>
+      <div class="chart-card dynamic-height" id="cardProductBreakdown"><h3>제품별 감정 분포</h3><div class="desc">제품마다 긍정/중립/부정 실제 건수</div><div class="chart-wrap" id="wrapProductBreakdown"><canvas id="chartProductBreakdown"></canvas></div></div>
+      <div class="chart-card"><h3>다국어 리뷰 분석</h3><div class="desc">언어(한/영/중)별 리뷰 수</div><canvas id="chartLanguage"></canvas></div>
     </div>
     <div class="compare-note" id="compareHiddenNote">💡 특정 제품을 선택하면 "제품별 비교/제품별 감정 분포" 차트는 비교 대상이 없어 숨겨집니다.</div>
 

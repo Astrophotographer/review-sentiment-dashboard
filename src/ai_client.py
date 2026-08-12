@@ -43,7 +43,12 @@ class AIClient:
         self.sentiment_model = ai_cfg.get("sentiment_model", "claude-haiku-4-5-20251001")
         self.extract_model = ai_cfg.get("extract_model", "claude-sonnet-5")
         self.max_tokens = ai_cfg.get("max_tokens", 1024)
+        # extract는 긴 JSON 응답이 필요해서 analyze용 max_tokens를 그대로 쓰면
+        # 응답이 중간에 잘려 파싱 실패 -> 조용히 폴백되는 문제가 있었다.
+        self.extract_max_tokens = ai_cfg.get("extract_max_tokens", max(self.max_tokens * 4, 4096))
         self.timeout = ai_cfg.get("request_timeout_sec", 30)
+        # extract는 리뷰 최대 200건을 한 프롬프트에 넣으므로 analyze용 타임아웃보다 넉넉히.
+        self.extract_timeout = ai_cfg.get("extract_timeout_sec", max(self.timeout * 3, 120))
         self.base_url = (ai_cfg.get("base_url") or "http://127.0.0.1:8000/v1").rstrip("/")
         self.openai_base_url = (ai_cfg.get("openai_base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
         self.enable_thinking = bool(ai_cfg.get("enable_thinking", False))
@@ -97,14 +102,16 @@ class AIClient:
         return self.base_url, self.spark_api_key, self.spark_api_key_env
 
     # ---------------- 내부: LLM 호출 ----------------
-    def _call_llm(self, model: str, system: str, user_prompt: str) -> Optional[str]:
+    def _call_llm(self, model: str, system: str, user_prompt: str,
+                   max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
         if not self.available:
             return None
         if self.provider in ("spark", "openai"):
-            return self._call_openai(model, system, user_prompt)
-        return self._call_claude(model, system, user_prompt)
+            return self._call_openai(model, system, user_prompt, max_tokens=max_tokens, timeout=timeout)
+        return self._call_claude(model, system, user_prompt, max_tokens=max_tokens, timeout=timeout)
 
-    def _call_claude(self, model: str, system: str, user_prompt: str) -> Optional[str]:
+    def _call_claude(self, model: str, system: str, user_prompt: str,
+                      max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
         if not self.available:
             return None
         headers = {
@@ -112,25 +119,40 @@ class AIClient:
             "anthropic-version": ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
+        used_max = max_tokens or self.max_tokens
+        used_timeout = timeout or self.timeout
         payload = {
             "model": model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": used_max,
             "system": system,
             "messages": [{"role": "user", "content": user_prompt}],
         }
         try:
-            resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=self.timeout)
+            resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=used_timeout)
             if resp.status_code != 200:
                 self.logger.error(f"AI API 호출 실패 (status={resp.status_code}): {resp.text[:200]}")
                 return None
             data = resp.json()
+            if data.get("stop_reason") == "max_tokens":
+                self.logger.warning(
+                    f"AI 응답이 max_tokens({used_max}) 제한에 걸려 중간에 잘렸습니다. "
+                    "JSON 파싱이 실패할 수 있습니다 (config.json의 max_tokens/extract_max_tokens를 늘려보세요)."
+                )
             text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
             return "\n".join(text_blocks).strip()
+        except requests.exceptions.Timeout:
+            self.logger.error(
+                f"AI API 요청이 {used_timeout}초 안에 끝나지 않아 타임아웃되었습니다 "
+                "(요청이 크거나 서버가 느린 경우 흔함 - config.json의 "
+                "request_timeout_sec/extract_timeout_sec를 늘려보세요)."
+            )
+            return None
         except requests.RequestException as e:
             self.logger.error(f"AI API 요청 중 네트워크 오류: {e}")
             return None
 
-    def _call_openai(self, model: str, system: str, user_prompt: str) -> Optional[str]:
+    def _call_openai(self, model: str, system: str, user_prompt: str,
+                      max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
         """OpenAI / vLLM OpenAI 호환 chat completions."""
         base_url, key, env_name = self._openai_compat_base_and_key()
         headers = {"content-type": "application/json"}
@@ -140,9 +162,11 @@ class AIClient:
             self.logger.error(f"{self.provider} 호출에 {env_name} 가 필요합니다.")
             return None
         headers["authorization"] = f"Bearer {key}"
+        used_max = max_tokens or self.max_tokens
+        used_timeout = timeout or self.timeout
         payload = {
             "model": model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": used_max,
             "temperature": 0,
             "messages": [
                 {"role": "system", "content": system},
@@ -153,7 +177,7 @@ class AIClient:
             payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         url = f"{base_url}/chat/completions"
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            resp = requests.post(url, headers=headers, json=payload, timeout=used_timeout)
             if resp.status_code != 200:
                 self.logger.error(
                     f"{self.provider} API 호출 실패 (status={resp.status_code}): {resp.text[:200]}"
@@ -235,6 +259,9 @@ class AIClient:
                 "aspects": aspects,
             }
 
+        if result and not parsed:
+            self.logger.error(f"AI 응답을 JSON으로 파싱하지 못했습니다. 원문 일부: {result[:200]!r}")
+
         raise RuntimeError(
             f"AI 감정분석 API 호출에 실패했습니다 (provider={self.provider} — "
             "크레딧 부족/인증오류/네트워크/터널 끊김 등 - logs/app.log 확인)"
@@ -266,23 +293,41 @@ class AIClient:
             "너는 커머스 VOC(고객의 소리) 분석가다. 주어진 리뷰 목록을 종합 분석하여 아래 JSON 스키마로만 답하라. "
             "다른 설명 문장은 절대 포함하지 마라.\n"
             "{\n"
-            '  "positive_keywords": ["...", "..."],\n'
-            '  "negative_keywords": ["...", "..."],\n'
+            '  "positive_keywords": [{"keyword": "빠른 배송", "count": 23}, ...],\n'
+            '  "negative_keywords": [{"keyword": "배송 지연", "count": 8}, ...],\n'
             '  "summary": "전체 리뷰에 대한 2~4문장 요약",\n'
             '  "suggestions": ["개선 제안1", "개선 제안2"],\n'
             '  "topic_breakdown": [{"topic": "배송", "count": 9, "examples": ["배송 지연", "오배송"]}]\n'
             "}\n"
-            "topic_breakdown 은 부정/긍정 리뷰를 유형별로 묶어 건수와 대표 키워드를 제공하는 항목이다."
+            "positive_keywords/negative_keywords 의 keyword는 \"배송 지연\", \"품질 불량\"처럼 "
+            "단어 하나가 아니라 의미가 통하는 2~3어절 구(句)로 만들고, count는 해당 키워드가 "
+            "리뷰들에서 실제로 언급된(또는 그와 같은 취지의) 횟수를 세어 넣어라. 키워드는 count 내림차순으로 정렬하라.\n"
+            "topic_breakdown 은 부정/긍정 리뷰를 유형별로 묶어 건수와 대표 키워드를 제공하는 항목이다.\n"
+            "응답이 너무 길어지지 않도록 반드시 지켜라: positive_keywords/negative_keywords는 "
+            "각각 최대 5개, topic_breakdown은 최대 5개 유형까지만, 각 유형의 examples는 최대 3개까지만 "
+            "포함하라. summary는 4문장을 넘기지 마라."
         )
         joined = "\n".join(
             f"- ({r.get('sentiment','?')}, {r.get('rating','?')}점) {r.get('review_text','')}"
             for r in reviews[:200]
         )
         user_prompt = f"[분석 조건: {condition_desc}]\n리뷰 목록:\n{joined}"
-        result = self._call_llm(self.extract_model, system, user_prompt)
-        parsed = self._extract_json(result) if result else None
-        if parsed:
-            return parsed
+
+        parsed = None
+        result = None
+        for attempt in range(2):
+            result = self._call_llm(
+                self.extract_model, system, user_prompt,
+                max_tokens=self.extract_max_tokens, timeout=self.extract_timeout,
+            )
+            parsed = self._extract_json(result) if result else None
+            if parsed:
+                return parsed
+            if attempt == 0:
+                self.logger.warning("AI 추출 첫 시도가 실패해 한 번 더 재시도합니다...")
+
+        if result and not parsed:
+            self.logger.error(f"AI 추출 응답을 JSON으로 파싱하지 못했습니다. 원문 일부: {result[:300]!r}")
 
         self.logger.warning(
             f"AI 키워드/요약 추출 호출이 실패해 규칙 기반 결과로 대체합니다 "
@@ -320,8 +365,8 @@ class AIClient:
                 topic_breakdown.append({"topic": topic, "count": count, "examples": hints})
 
         return {
-            "positive_keywords": [w for w, _ in pos_sorted] or ["데이터 부족"],
-            "negative_keywords": [w for w, _ in neg_sorted] or ["데이터 부족"],
+            "positive_keywords": [{"keyword": w, "count": c} for w, c in pos_sorted] or [{"keyword": "데이터 부족", "count": 0}],
+            "negative_keywords": [{"keyword": w, "count": c} for w, c in neg_sorted] or [{"keyword": "데이터 부족", "count": 0}],
             "summary": f"총 {len(reviews)}건의 리뷰를 규칙 기반으로 요약했습니다. "
                        f"(Spark/OpenAI/Anthropic provider 를 선택하면 AI 요약을 받을 수 있습니다.)",
             "suggestions": ["대시보드에서 채점 모델을 Spark(qwen) 또는 OpenAI 등으로 바꾼 뒤 재분석해 보세요."],

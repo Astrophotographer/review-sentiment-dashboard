@@ -47,13 +47,21 @@ def extract_insights(db, ai_client, logger, sentiment=None, date_from=None, date
     return insights
 
 
+def _kw_text(item):
+    """positive_keywords/negative_keywords 항목이 새 형식({'keyword':...,'count':...})이든
+    예전 형식(그냥 문자열)이든 안전하게 키워드 텍스트만 꺼낸다."""
+    return item.get("keyword", "") if isinstance(item, dict) else str(item)
+
+
 def print_insights(insights: dict):
     print()
     print(f"=== 리뷰 키워드/요약 분석 ({insights.get('condition','')}) ===")
     print(f"대상 리뷰 수: {insights.get('review_count', 0)}건")
     print()
-    print("[긍정 키워드]" if insights.get("positive_keywords") else "", ", ".join(insights.get("positive_keywords", [])))
-    print("[부정 키워드]" if insights.get("negative_keywords") else "", ", ".join(insights.get("negative_keywords", [])))
+    pos_kw = ", ".join(_kw_text(k) for k in insights.get("positive_keywords", []))
+    neg_kw = ", ".join(_kw_text(k) for k in insights.get("negative_keywords", []))
+    print("[긍정 키워드]" if insights.get("positive_keywords") else "", pos_kw)
+    print("[부정 키워드]" if insights.get("negative_keywords") else "", neg_kw)
     if insights.get("topic_breakdown"):
         print()
         print("[주요 불만/칭찬 유형]")

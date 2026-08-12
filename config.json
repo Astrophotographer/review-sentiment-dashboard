@@ -11,7 +11,9 @@
     "sentiment_model": "qwen",
     "extract_model": "qwen",
     "max_tokens": 1024,
-    "request_timeout_sec": 90
+    "extract_max_tokens": 4096,
+    "request_timeout_sec": 90,
+    "extract_timeout_sec": 120
   },
   "dedup_policy": "skip",
   "sentiment_grade": {

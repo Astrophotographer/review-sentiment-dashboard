@@ -312,7 +312,7 @@ def chart_product_sentiment_breakdown(db, output_dir, dpi=150):
 # ── 5. [보너스] 언어별 분포: 가로 막대 차트 ──────────────────────────────
 def chart_language_distribution(db, output_dir, dpi=150):
     rows = db.get_all_clean()
-    lang_labels = {"ko": "한국어", "en": "영어"}
+    lang_labels = {"ko": "한국어", "en": "영어", "zh": "중국어"}
     counts = defaultdict(int)
     pos_counts = defaultdict(int)
     analyzed_counts = defaultdict(int)

@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import shutil
+import logging
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -101,6 +102,15 @@ class TestInteractiveHtmlDashboard(unittest.TestCase):
         self.db.close()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
+    def test_rating_sentiment_png_chart_still_generated_despite_removal_from_html(self):
+        # HTML 대시보드에서는 "별점-감정 상관관계" 카드를 뺐지만, 이건 과제 필수
+        # 차트 3종 중 하나라서 matplotlib PNG는 그대로 생성되어야 한다.
+        from src import visualizer
+        cfg = dict(self.config)
+        cfg["visualization"] = {"output_dir": self.tmp_dir, "dpi": 80, "font_candidates": []}
+        paths = visualizer.generate_all_charts(self.db, cfg, self.logger)
+        self.assertTrue(any("rating_sentiment_matrix.png" in p for p in paths))
+
     def test_html_dashboard_contains_filter_elements_and_embedded_data(self):
         from src import reporter
         path = reporter.build_html_dashboard(self.db, [], None, self.tmp_dir)
@@ -119,6 +129,16 @@ class TestInteractiveHtmlDashboard(unittest.TestCase):
         self.assertIn("Chart.js v4.4.1", html, "Chart.js 본체가 인라인으로 삽입되어 있어야 한다")
         # 제품이 하나로 좁혀졌을 때 비교 차트를 숨기는 로직이 포함되어 있어야 한다
         self.assertIn("toggleComparisonCharts", html)
+        # 별점-감정 상관관계 차트는 HTML 대시보드에서는 제거되었다 (matplotlib PNG로는
+        # 여전히 별도 생성되어 요구사항은 충족한다 - test_visualizer 쪽에서 확인).
+        self.assertNotIn('id="chartRating"', html)
+        # 시간별 감정 추이는 이동평균으로 표시된다
+        self.assertIn("movingAverage", html)
+        self.assertIn("이동평균", html)
+        # 제품별 차트는 제품 수에 비례해 높이가 늘어나야 12개 제품이 안 잘리고 다 보인다
+        self.assertIn("_sizeWrapForCategories", html)
+        # 다국어 지원: 한국어/영어 + 중국어
+        self.assertIn('"zh"', html)
 
     def test_embedded_review_payload_matches_db_row_count(self):
         from src import reporter
@@ -203,6 +223,81 @@ class TestAIFailureVsFallback(unittest.TestCase):
             [{"review_text": "좋아요", "sentiment": "positive", "rating": 5}], "감정=전체"
         )
         self.assertIn("positive_keywords", result)
+
+    def test_fallback_keywords_include_occurrence_counts(self):
+        # 과제 문서 예시("1. 빠른 배송 (23회)")처럼 키워드가 단순 문자열이 아니라
+        # {keyword, count} 형태로 나와서 TOP N 리포트에 실제 등장 횟수를 붙일 수 있어야 한다.
+        client = self._client_without_key()
+        reviews = [
+            {"review_text": "정말 좋아요 만족합니다", "sentiment": "positive", "rating": 5},
+            {"review_text": "이것도 좋아요", "sentiment": "positive", "rating": 4},
+            {"review_text": "배송이 늦어서 불편했어요", "sentiment": "negative", "rating": 2},
+        ]
+        result = client.extract_insights(reviews, "감정=전체")
+        pos = result["positive_keywords"]
+        self.assertTrue(all(isinstance(k, dict) and "keyword" in k and "count" in k for k in pos))
+        good = next(k for k in pos if k["keyword"] == "좋")
+        self.assertEqual(good["count"], 2, "'좋'이 두 리뷰에 등장했으므로 count=2 여야 한다")
+
+    def test_extract_uses_longer_timeout_than_analyze(self):
+        # extract는 리뷰를 최대 200건까지 한 프롬프트에 넣고 최대 4096 토큰까지
+        # 생성하게 하므로, analyze(리뷰 1건)용 짧은 타임아웃으로는 실제로 자주
+        # ReadTimeout이 났다. 전용 타임아웃이 더 길어야 한다.
+        client = self._client_with_key()
+        self.assertGreater(client.extract_timeout, client.timeout)
+        self.assertGreaterEqual(client.extract_timeout, 120)
+
+    def test_extract_falls_back_with_clear_message_on_timeout(self):
+        # 회귀 테스트: 응답 시간 초과(ReadTimeout)가 나도 폴백 결과는 정상 반환되고,
+        # 원인이 "타임아웃"이라는 걸 명확히 알 수 있는 로그가 남아야 한다
+        # (예전엔 "네트워크 오류: Read timed out..." 처럼 뭉뚱그려져 원인 파악이 어려웠다).
+        import requests as _requests
+        client = self._client_with_key()
+        logged = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                logged.append((record.levelname, record.getMessage()))
+
+        self.logger.addHandler(_Capture())
+        with patch("requests.post", side_effect=_requests.exceptions.ReadTimeout("Read timed out.")):
+            result = client.extract_insights(
+                [{"review_text": "좋아요", "sentiment": "positive", "rating": 5}], "감정=전체"
+            )
+        self.assertIn("positive_keywords", result)
+        timeout_logs = [m for lvl, m in logged if lvl == "ERROR" and "타임아웃" in m]
+        # extract는 첫 시도가 실패하면 한 번 더 재시도하므로(총 2회 시도),
+        # 매번 타임아웃나면 원인 로그도 2번 남는 게 맞다.
+        self.assertEqual(len(timeout_logs), 2, "재시도 포함 시도마다 타임아웃 원인이 ERROR 로그로 남아야 한다")
+
+    def test_extract_uses_larger_max_tokens_than_analyze(self):
+        # extract는 analyze보다 훨씬 긴 JSON을 요구하므로, 같은 max_tokens를 쓰면
+        # 응답이 중간에 잘려 파싱 실패로 이어질 수 있다. 전용 예산이 더 커야 한다.
+        # (실제로 리뷰 180건을 요약할 때 2048로도 부족했던 적이 있어 4096 이상을 요구한다.)
+        client = self._client_with_key()
+        self.assertGreater(client.extract_max_tokens, client.max_tokens)
+        self.assertGreaterEqual(client.extract_max_tokens, 4096)
+
+    def test_extract_logs_error_when_response_is_truncated_and_unparseable(self):
+        # 회귀 테스트: 응답이 200 OK로 오긴 했지만 JSON이 중간에 잘려 파싱이 실패하는
+        # 경우, 예전에는 아무 로그도 안 남기고 조용히 폴백으로 넘어갔다. 이제는 원문
+        # 일부를 담은 ERROR 로그를 남기고, 그래도 폴백 결과 자체는 정상 반환해야 한다.
+        client = self._client_with_key()
+        logged = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                logged.append((record.levelname, record.getMessage()))
+
+        self.logger.addHandler(_Capture())
+        truncated_json = '{"positive_keywords": [{"keyword": "좋아요", "count": 3}], "negative_keyw'
+        with patch.object(client, "_call_claude", return_value=truncated_json):
+            result = client.extract_insights(
+                [{"review_text": "좋아요", "sentiment": "positive", "rating": 5}], "감정=전체"
+            )
+        self.assertIn("positive_keywords", result, "파싱 실패해도 폴백 결과는 정상 반환되어야 한다")
+        error_logs = [m for lvl, m in logged if lvl == "ERROR" and "파싱하지 못했습니다" in m]
+        self.assertEqual(len(error_logs), 1, "파싱 실패 원인이 ERROR 로그로 남아야 한다")
 
     def test_extract_insights_falls_back_without_crashing_when_key_present_but_call_fails(self):
         # extract는 analyze와 달리 "스킵" 요구사항이 없으므로, 실패해도 대시보드가
