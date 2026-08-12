@@ -40,9 +40,10 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(h1, h3)
         self.assertNotEqual(h1, h4)
 
-    def test_detect_language_ko_en(self):
+    def test_detect_language_ko_en_zh(self):
         self.assertEqual(detect_language("배송이 빨라요"), "ko")
         self.assertEqual(detect_language("Great product, fast shipping"), "en")
+        self.assertEqual(detect_language("质量很好，物流也很快"), "zh")
 
     def test_sentiment_grade_maps_sentiment_and_confidence_to_5_levels(self):
         # 중립은 신뢰도와 무관하게 항상 3점(보통)

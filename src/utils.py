@@ -56,9 +56,13 @@ def dedup_hash(text: str, product: Optional[str] = None) -> str:
 
 
 def detect_language(text: str) -> str:
-    """아주 단순한 휴리스틱 언어 감지: 한글 포함 여부로 ko/en 판별 (다국어 보너스 과제용)."""
-    if re.search(r"[가-힣]", text or ""):
+    """아주 단순한 휴리스틱 언어 감지: 한글 -> ko, (한글 없이) 한자 -> zh, 그 외 -> en
+    (다국어 보너스 과제용, 한국어/영어/중국어 3개 언어 지원)."""
+    t = text or ""
+    if re.search(r"[가-힣]", t):
         return "ko"
+    if re.search(r"[\u4e00-\u9fff]", t):
+        return "zh"
     return "en"
 
 

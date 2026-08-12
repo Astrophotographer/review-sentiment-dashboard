@@ -37,6 +37,9 @@ class AIClient:
         # 문제가 있었다. 그래서 extract 전용으로 더 넉넉한 값을 따로 둔다.
         self.extract_max_tokens = ai_cfg.get("extract_max_tokens", max(self.max_tokens * 4, 4096))
         self.timeout = ai_cfg.get("request_timeout_sec", 30)
+        # extract는 리뷰 최대 200건을 한 프롬프트에 넣고 최대 4096 토큰까지 생성하게 하므로,
+        # analyze(리뷰 1건, 응답 몇 십 토큰)용 30초로는 종종 타임아웃난다. 넉넉하게 별도로 둔다.
+        self.extract_timeout = ai_cfg.get("extract_timeout_sec", max(self.timeout * 3, 120))
         self.available = bool(self.api_key)
         if not self.available:
             self.logger.warning(
@@ -46,7 +49,8 @@ class AIClient:
             )
 
     # ---------------- 내부: 실제 API 호출 ----------------
-    def _call_claude(self, model: str, system: str, user_prompt: str, max_tokens: Optional[int] = None) -> Optional[str]:
+    def _call_claude(self, model: str, system: str, user_prompt: str,
+                      max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
         if not self.available:
             return None
         headers = {
@@ -61,7 +65,7 @@ class AIClient:
             "messages": [{"role": "user", "content": user_prompt}],
         }
         try:
-            resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=self.timeout)
+            resp = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=timeout or self.timeout)
             if resp.status_code != 200:
                 self.logger.error(f"AI API 호출 실패 (status={resp.status_code}): {resp.text[:200]}")
                 return None
@@ -73,6 +77,14 @@ class AIClient:
                 )
             text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
             return "\n".join(text_blocks).strip()
+        except requests.exceptions.Timeout:
+            used_timeout = timeout or self.timeout
+            self.logger.error(
+                f"AI API 요청이 {used_timeout}초 안에 끝나지 않아 타임아웃되었습니다 "
+                "(요청이 크거나 서버가 느린 경우 흔함 - config.json의 "
+                "request_timeout_sec/extract_timeout_sec를 늘려보세요)."
+            )
+            return None
         except requests.RequestException as e:
             self.logger.error(f"AI API 요청 중 네트워크 오류: {e}")
             return None
@@ -170,10 +182,22 @@ class AIClient:
         )
         joined = "\n".join(f"- ({r.get('sentiment','?')}, {r.get('rating','?')}점) {r.get('review_text','')}" for r in reviews[:200])
         user_prompt = f"[분석 조건: {condition_desc}]\n리뷰 목록:\n{joined}"
-        result = self._call_claude(self.extract_model, system, user_prompt, max_tokens=self.extract_max_tokens)
-        parsed = self._extract_json(result) if result else None
-        if parsed:
-            return parsed
+
+        # 타임아웃/일시적 네트워크 문제 등으로 첫 시도가 실패해도 곧바로 폴백으로
+        # 넘어가지 않고 한 번 더 시도한다 (180건 분석처럼 무거운 요청 하나를 한 번
+        # 실패했다고 바로 포기하기엔 아깝다).
+        parsed = None
+        result = None
+        for attempt in range(2):
+            result = self._call_claude(
+                self.extract_model, system, user_prompt,
+                max_tokens=self.extract_max_tokens, timeout=self.extract_timeout,
+            )
+            parsed = self._extract_json(result) if result else None
+            if parsed:
+                return parsed
+            if attempt == 0:
+                self.logger.warning("AI 추출 첫 시도가 실패해 한 번 더 재시도합니다...")
 
         if result and not parsed:
             # HTTP 호출 자체는 성공했지만(200 OK) 응답을 JSON으로 못 읽은 경우

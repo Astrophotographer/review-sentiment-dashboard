@@ -4,6 +4,7 @@
 // ============================================================
 const THRESHOLD = __THRESHOLD__;
 const ALL_REVIEWS = __ALL_REVIEWS_JSON__;
+const TREND_MA_WINDOW = 3; // 시간별 감정 추이: N일 이동평균
 
 const GRADE_INFO = [
   { score: 1, label: "아주 나쁨", color: "#C0392B" },
@@ -14,7 +15,8 @@ const GRADE_INFO = [
 ];
 const SENT_COLORS = { positive: "#1FAF6B", neutral: "#9BA3B4", negative: "#E5484D" };
 const SENT_LABEL = { positive: "긍정", neutral: "중립", negative: "부정" };
-const LANG_LABEL = { ko: "한국어", en: "영어" };
+// 보너스: 다국어 지원 — 한국어/영어/중국어 3개 언어 라벨
+const LANG_LABEL = { ko: "한국어", en: "영어", zh: "중국어" };
 
 // Python의 utils.sentiment_grade() 와 동일한 로직 (감정+신뢰도 -> 1~5점 등급)
 function sentimentGrade(sentiment, confidence) {
@@ -23,6 +25,17 @@ function sentimentGrade(sentiment, confidence) {
   if (sentiment === "positive") return c >= THRESHOLD ? GRADE_INFO[4] : GRADE_INFO[3];
   if (sentiment === "negative") return c >= THRESHOLD ? GRADE_INFO[0] : GRADE_INFO[1];
   return GRADE_INFO[2];
+}
+
+// N일 트레일링 이동평균 (앞쪽 구간은 있는 만큼만으로 평균내서 배열 길이를 유지한다)
+function movingAverage(values, window) {
+  const out = [];
+  for (let i = 0; i < values.length; i++) {
+    const start = Math.max(0, i - window + 1);
+    const slice = values.slice(start, i + 1);
+    out.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+  }
+  return out;
 }
 
 // 카테고리 -> 그 안에 있는 제품 목록
@@ -91,7 +104,6 @@ function renderAll() {
   renderKPIs(rows);
   renderDonut(rows);
   renderTrend(rows);
-  renderRatingMatrix(rows);
   renderGrade(rows);
   renderLanguage(rows);
   toggleComparisonCharts(!prodSelected);
@@ -174,34 +186,20 @@ function renderTrend(rows) {
     byDate[r.date][r.sentiment]++;
   });
   const dates = Object.keys(byDate).sort();
+  // 날짜별 건수를 그대로 찍으면 하루 등락에 선이 너무 들쭉날쭉해서, N일 이동평균으로
+  // 부드럽게 다듬은 선을 그린다 (급격한 하루짜리 이상치보다 추세 자체가 잘 보이도록).
   charts.trend = new Chart(document.getElementById("chartTrend"), {
     type: "line",
     data: {
       labels: dates,
       datasets: ["positive", "neutral", "negative"].map((k) => ({
-        label: SENT_LABEL[k], data: dates.map((d) => byDate[d][k]), borderColor: SENT_COLORS[k],
-        backgroundColor: SENT_COLORS[k], tension: 0.3, pointRadius: 3,
+        label: `${SENT_LABEL[k]} (${TREND_MA_WINDOW}일 이동평균)`,
+        data: movingAverage(dates.map((d) => byDate[d][k]), TREND_MA_WINDOW),
+        borderColor: SENT_COLORS[k], backgroundColor: SENT_COLORS[k],
+        tension: 0.35, pointRadius: 2, borderWidth: 2.5,
       })),
     },
-    options: { plugins: { legend: { position: "top" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, animation: { duration: 300 } },
-  });
-}
-
-function renderRatingMatrix(rows) {
-  destroyChart("rating");
-  const ratings = ["1", "2", "3", "4", "5"];
-  const matrix = {};
-  ratings.forEach((r) => (matrix[r] = { positive: 0, neutral: 0, negative: 0 }));
-  rows.forEach((r) => { if (r.rating && r.sentiment) matrix[String(r.rating)][r.sentiment]++; });
-  charts.rating = new Chart(document.getElementById("chartRating"), {
-    type: "bar",
-    data: {
-      labels: ratings.map((r) => r + "점"),
-      datasets: ["negative", "neutral", "positive"].map((k) => ({
-        label: SENT_LABEL[k], data: ratings.map((r) => matrix[r][k]), backgroundColor: SENT_COLORS[k],
-      })),
-    },
-    options: { plugins: { legend: { position: "top" } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }, animation: { duration: 300 } },
+    options: { plugins: { legend: { position: "top" } }, scales: { y: { beginAtZero: true } }, animation: { duration: 300 } },
   });
 }
 
@@ -239,6 +237,16 @@ function renderLanguage(rows) {
   });
 }
 
+// 제품이 많아져도(12개 등) 막대가 잘리지 않도록, 캔버스를 감싼 래퍼 div의 높이를
+// 제품 수에 비례해서 늘린다. Chart.js는 responsive:true + maintainAspectRatio:false일 때
+// "캔버스를 감싼 부모 요소"의 실제 렌더링 크기를 기준으로 그리므로, 캔버스 자체가 아니라
+// 래퍼에 높이를 줘야 한다 (캔버스에 직접 주면 Chart.js 내부 리사이즈 로직이 다시 덮어써서
+// 의도한 것보다 훨씬 크게(또는 작게) 렌더링되는 문제가 있었다).
+function _sizeWrapForCategories(wrapId, count) {
+  const height = Math.max(220, count * 34 + 60);
+  document.getElementById(wrapId).style.height = height + "px";
+}
+
 function renderProductComparison(rows) {
   destroyChart("prodComp");
   const byProd = {};
@@ -256,10 +264,11 @@ function renderProductComparison(rows) {
   };
   products.sort((a, b) => posRatio(a) - posRatio(b));
   const posRatios = products.map(posRatio);
+  _sizeWrapForCategories("wrapProductComparison", products.length);
   charts.prodComp = new Chart(document.getElementById("chartProductComparison"), {
     type: "bar",
     data: { labels: products, datasets: [{ label: "긍정비율(%)", data: posRatios, backgroundColor: posRatios.map((v) => (v >= 40 ? SENT_COLORS.positive : v >= 25 ? "#F2A93B" : SENT_COLORS.negative)) }] },
-    options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, max: 100 } }, animation: { duration: 300 } },
+    options: { indexAxis: "y", responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, max: 100 } }, animation: { duration: 300 } },
   });
 }
 
@@ -274,13 +283,14 @@ function renderProductBreakdown(rows) {
   const products = Object.keys(byProd);
   const total = (p) => byProd[p].positive + byProd[p].neutral + byProd[p].negative;
   products.sort((a, b) => byProd[a].positive / (total(a) || 1) - byProd[b].positive / (total(b) || 1));
+  _sizeWrapForCategories("wrapProductBreakdown", products.length);
   charts.prodBreak = new Chart(document.getElementById("chartProductBreakdown"), {
     type: "bar",
     data: {
       labels: products,
       datasets: ["negative", "neutral", "positive"].map((k) => ({ label: SENT_LABEL[k], data: products.map((p) => byProd[p][k]), backgroundColor: SENT_COLORS[k] })),
     },
-    options: { indexAxis: "y", plugins: { legend: { position: "top" } }, scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } }, animation: { duration: 300 } },
+    options: { indexAxis: "y", responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "top" } }, scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } }, animation: { duration: 300 } },
   });
 }
 

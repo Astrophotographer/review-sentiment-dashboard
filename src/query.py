@@ -116,7 +116,7 @@ def print_stats(db, config=None):
     print(f"\n  평균 별점 {avg_rating:.2f}  ·  평균 감정점수 {avg_grade:.2f}/5  ·  평균 신뢰도 {avg_conf:.2f}")
 
     if s.get("language_dist"):
-        lang_labels = {"ko": "한국어", "en": "영어"}
+        lang_labels = {"ko": "한국어", "en": "영어", "zh": "중국어"}
         lang_rows = []
         for lang, c in s["language_dist"].items():
             pct = (c / total * 100) if total else 0.0

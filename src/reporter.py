@@ -134,7 +134,7 @@ def build_report_text(db, chart_paths, alert_result=None, threshold=0.75):
     if stats.get("language_dist"):
         lines.append("")
         lines.append("[언어 분포] (보너스: 다국어 지원)")
-        lang_labels = {"ko": "한국어", "en": "영어"}
+        lang_labels = {"ko": "한국어", "en": "영어", "zh": "중국어"}
         for lang, c in stats["language_dist"].items():
             pct = (c / total * 100) if total else 0.0
             lines.append(f"- {lang_labels.get(lang, lang)}: {c}건 ({pct:.1f}%)")
@@ -339,6 +339,8 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .chart-card h3 {{ font-size:13.5px; margin:0 0 4px; }}
   .chart-card .desc {{ font-size:12px; color:var(--muted); margin-bottom:12px; }}
   .chart-card canvas {{ max-height:280px; }}
+  .chart-card.dynamic-height canvas {{ max-height:none; }}
+  .chart-wrap {{ position:relative; width:100%; }}
   .compare-note {{ display:none; font-size:12.5px; color:var(--muted); padding:10px 4px; }}
 
   .panel {{ background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:22px; }}
@@ -415,11 +417,10 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     <div class="section-title">시각화 (선택한 카테고리/제품 기준)</div>
     <div class="charts">
       <div class="chart-card"><h3>감정 분포</h3><div class="desc">긍정/중립/부정 비율</div><canvas id="chartDonut"></canvas></div>
-      <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 건수 변화</div><canvas id="chartTrend"></canvas></div>
-      <div class="chart-card"><h3>별점-감정 상관관계</h3><div class="desc">별점별 감정 분포</div><canvas id="chartRating"></canvas></div>
+      <div class="chart-card"><h3>시간별 감정 추이</h3><div class="desc">날짜별 3일 이동평균</div><canvas id="chartTrend"></canvas></div>
       <div class="chart-card"><h3>감정 점수 분포 (1~5점)</h3><div class="desc">신뢰도까지 반영한 감정 강도</div><canvas id="chartGrade"></canvas></div>
-      <div class="chart-card" id="cardProductComparison"><h3>제품별 비교</h3><div class="desc">제품별 긍정 비율</div><canvas id="chartProductComparison"></canvas></div>
-      <div class="chart-card" id="cardProductBreakdown"><h3>제품별 감정 분포</h3><div class="desc">제품마다 긍정/중립/부정 실제 건수</div><canvas id="chartProductBreakdown"></canvas></div>
+      <div class="chart-card dynamic-height" id="cardProductComparison"><h3>제품별 비교</h3><div class="desc">제품별 긍정 비율</div><div class="chart-wrap" id="wrapProductComparison"><canvas id="chartProductComparison"></canvas></div></div>
+      <div class="chart-card dynamic-height" id="cardProductBreakdown"><h3>제품별 감정 분포</h3><div class="desc">제품마다 긍정/중립/부정 실제 건수</div><div class="chart-wrap" id="wrapProductBreakdown"><canvas id="chartProductBreakdown"></canvas></div></div>
       <div class="chart-card"><h3>다국어 리뷰 분석</h3><div class="desc">언어(한/영)별 리뷰 수</div><canvas id="chartLanguage"></canvas></div>
     </div>
     <div class="compare-note" id="compareHiddenNote">💡 특정 제품을 선택하면 "제품별 비교/제품별 감정 분포" 차트는 비교 대상이 없어 숨겨집니다.</div>
