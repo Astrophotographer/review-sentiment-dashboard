@@ -7,7 +7,6 @@
   const modelSel = document.getElementById("modelSelect");
   const sparkTemp = document.getElementById("sparkTemp");
   const modelStatus = document.getElementById("modelStatus");
-  const applyBtn = document.getElementById("applyModelBtn");
   const reanalyzeBtn = document.getElementById("reanalyzeBtn");
   const modelBar = document.getElementById("modelBar");
   if (!providerSel || !modelBar) return;
@@ -77,6 +76,16 @@
     if (needKey && wasHidden && providerKeyInput) providerKeyInput.focus();
   }
 
+  function readTempC(spark) {
+    if (!spark) return null;
+    const raw = spark.temp_c != null ? spark.temp_c
+      : (spark.temperature != null ? spark.temperature
+        : (spark.raw && spark.raw.temp_c != null ? spark.raw.temp_c : null));
+    if (raw == null || raw === "") return null;
+    const t = Number(raw);
+    return Number.isFinite(t) ? t : null;
+  }
+
   function updateSparkTemp(spark, provider) {
     if (!sparkTemp) return;
     if (provider !== "spark") {
@@ -85,8 +94,8 @@
     }
     sparkTemp.hidden = false;
     sparkTemp.removeAttribute("title");
-    if (spark && spark.ok && spark.temp_c != null) {
-      const t = Number(spark.temp_c);
+    const t = readTempC(spark);
+    if (spark && spark.ok && t != null) {
       let kind = "ok";
       let label = "연결됨";
       if (t >= 90) {
@@ -96,11 +105,12 @@
         kind = "warn";
         label = "이상있음";
       }
-      sparkTemp.textContent = `● ${label} ${t}°C`;
+      sparkTemp.textContent = `● ${label} ${Math.round(t * 10) / 10}°C`;
       sparkTemp.className = "spark-temp " + kind;
     } else if (spark && spark.ok) {
-      sparkTemp.textContent = "● 이상있음";
-      sparkTemp.className = "spark-temp warn";
+      // health는 왔지만 온도 없음 → 연결은 된 것으로 초록 표시 (온도 생략)
+      sparkTemp.textContent = "● 연결됨";
+      sparkTemp.className = "spark-temp ok";
       if (spark.error) sparkTemp.title = spark.error;
     } else {
       sparkTemp.textContent = "● 접속끊김";
@@ -181,6 +191,17 @@
     }
   });
 
+  modelSel.addEventListener("change", async () => {
+    if (providerSel.value === "fallback") return;
+    try {
+      setStatus("설정 저장 중…", "busy");
+      await postConfig(providerSel.value, modelSel.value);
+      setStatus("설정 저장됨", "ok");
+    } catch (e) {
+      setStatus(String(e.message || e), "warn");
+    }
+  });
+
   async function postConfig(provider, model) {
     const res = await fetch("/api/config", {
       method: "POST",
@@ -233,19 +254,6 @@
     if (e.key === "Enter") saveProviderKeyBtn && saveProviderKeyBtn.click();
   });
 
-  applyBtn && applyBtn.addEventListener("click", async () => {
-    try {
-      applyBtn.disabled = true;
-      setStatus("설정 저장 중…");
-      await postConfig(providerSel.value, modelSel.value);
-      setStatus("설정 저장됨", "ok");
-    } catch (e) {
-      setStatus(String(e.message || e), "warn");
-    } finally {
-      applyBtn.disabled = false;
-    }
-  });
-
   async function pollJob(label) {
     const res = await fetch("/api/job", { cache: "no-store" });
     const job = await res.json();
@@ -281,7 +289,6 @@
           clearInterval(pollTimer);
           pollTimer = null;
           reanalyzeBtn && (reanalyzeBtn.disabled = false);
-          applyBtn && (applyBtn.disabled = false);
           uploadBtn && (uploadBtn.disabled = false);
         }
       } catch (e) {
@@ -290,7 +297,6 @@
         setStatus(String(e.message || e), "warn");
         setUploadStatus(String(e.message || e), "warn");
         reanalyzeBtn && (reanalyzeBtn.disabled = false);
-        applyBtn && (applyBtn.disabled = false);
         uploadBtn && (uploadBtn.disabled = false);
       }
     }, 1500);
@@ -300,7 +306,6 @@
     if (!confirm("선택한 모델로 전체 리뷰를 다시 채점할까요? (시간이 걸릴 수 있습니다)")) return;
     try {
       reanalyzeBtn.disabled = true;
-      applyBtn && (applyBtn.disabled = true);
       uploadBtn && (uploadBtn.disabled = true);
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -314,7 +319,6 @@
     } catch (e) {
       setStatus(String(e.message || e), "warn");
       reanalyzeBtn.disabled = false;
-      applyBtn && (applyBtn.disabled = false);
       uploadBtn && (uploadBtn.disabled = false);
     }
   });
@@ -329,7 +333,6 @@
     try {
       uploadBtn.disabled = true;
       reanalyzeBtn && (reanalyzeBtn.disabled = true);
-      applyBtn && (applyBtn.disabled = true);
       setUploadStatus("업로드 중…", "busy");
       setStatus("CSV 업로드 중…", "busy");
       const fd = new FormData();
@@ -344,7 +347,6 @@
       setStatus(String(e.message || e), "warn");
       uploadBtn.disabled = false;
       reanalyzeBtn && (reanalyzeBtn.disabled = false);
-      applyBtn && (applyBtn.disabled = false);
     }
   });
 

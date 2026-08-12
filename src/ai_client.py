@@ -353,9 +353,18 @@ class AIClient:
             if resp.status_code != 200:
                 return {"ok": False, "error": f"HTTP {resp.status_code}"}
             data = resp.json()
+            temp = data.get("temp_c")
+            if temp is None:
+                temp = data.get("temperature")
+            if temp is None and isinstance(data.get("gpu"), dict):
+                temp = data["gpu"].get("temp_c") or data["gpu"].get("temperature")
+            try:
+                temp = float(temp) if temp is not None and temp != "" else None
+            except (TypeError, ValueError):
+                temp = None
             return {
                 "ok": bool(data.get("ok", True)),
-                "temp_c": data.get("temp_c"),
+                "temp_c": temp,
                 "model": data.get("model"),
                 "raw": data,
             }

@@ -340,6 +340,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:999px;
     border:1px solid var(--border); background:var(--paper); color:var(--ink);
   }}
+  .spark-temp[hidden] {{ display:none !important; }}
   .spark-temp.ok {{ background:rgba(31,175,107,.1); color:#0E8A54; border-color:rgba(31,175,107,.25); }}
   .spark-temp.warn {{ background:rgba(245,166,35,.12); color:#B87A00; border-color:rgba(245,166,35,.3); }}
   .spark-temp.error {{ background:rgba(229,72,77,.12); color:#C7333A; border-color:rgba(229,72,77,.3); }}
@@ -494,8 +495,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       </select>
       <label for="modelSelect">모델</label>
       <select id="modelSelect"><option value="qwen">qwen</option></select>
-      <span class="spark-temp" id="sparkTemp" hidden>● 연결됨 --°C</span>
-      <button id="applyModelBtn" type="button">적용</button>
+      <span class="spark-temp offline" id="sparkTemp" hidden>● 접속끊김</span>
       <button id="reanalyzeBtn" class="primary" type="button">이 모델로 재분석</button>
       <a class="compare-link" href="/compare.html">모델 비교 →</a>
       <span class="model-status" id="modelStatus">모델 설정 불러오는 중…</span>
