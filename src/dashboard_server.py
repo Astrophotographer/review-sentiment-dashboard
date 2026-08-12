@@ -20,7 +20,7 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 from .ai_client import AIClient
-from . import analyzer, extractor, alerts, visualizer, reporter, model_runs, ingest, cleaner
+from . import analyzer, extractor, alerts, visualizer, reporter, model_runs, ingest, cleaner, envfile
 from .db import Database
 
 
@@ -131,6 +131,7 @@ def build_status(config_path: str, logger) -> dict:
         "providers": PROVIDER_OPTIONS,
         "models": models,
         "anthropic_key_set": bool(os.environ.get(ai.get("api_key_env", "ANTHROPIC_API_KEY"), "").strip()),
+        "spark_key_set": bool(os.environ.get(ai.get("spark_api_key_env", "SPARK_API_KEY"), "").strip()),
         "spark": spark,
         "spark_tunnel_ok": tunnel_ok,
         "base_url": ai.get("base_url"),
@@ -168,6 +169,23 @@ def apply_provider_config(config_path: str, provider: str, model: Optional[str],
 
     _write_config(config_path, config)
     logger.info(f"AI provider 설정 저장: provider={provider}, model={ai.get('sentiment_model')}")
+    return build_status(config_path, logger)
+
+
+def save_spark_api_key(config_path: str, key: str, logger) -> dict:
+    """대시보드에서 입력한 Spark 키를 .env 에 저장하고 현재 프로세스 환경변수에도 반영한다."""
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("SPARK_API_KEY 가 비어 있습니다.")
+    if len(key) > 512:
+        raise ValueError("키가 너무 깁니다.")
+    config = _read_config(config_path)
+    env_name = config.get("ai", {}).get("spark_api_key_env", "SPARK_API_KEY")
+    env_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), ".env")
+    envfile.write_dotenv(env_path, {env_name: key})
+    envfile.ensure_gitignored(env_path)
+    os.environ[env_name] = key
+    logger.info(f"{env_name} 을 .env 에 저장했습니다.")
     return build_status(config_path, logger)
 
 
@@ -450,6 +468,14 @@ def make_handler(
                         logger=logger,
                     )
                     self._send_json(200, status)
+                except Exception as e:  # noqa: BLE001
+                    self._send_json(400, {"error": str(e)})
+                return
+            if parsed.path == "/api/spark-key":
+                try:
+                    data = self._read_json()
+                    status = save_spark_api_key(config_path, data.get("key") or "", logger)
+                    self._send_json(200, {"ok": True, **status})
                 except Exception as e:  # noqa: BLE001
                     self._send_json(400, {"error": str(e)})
                 return

@@ -336,17 +336,34 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
   .model-bar button:disabled {{ opacity:.55; cursor:not-allowed; }}
   .model-bar.offline {{ opacity:.92; }}
   .spark-temp {{
+    display:inline-flex; align-items:center; gap:6px;
     font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:999px;
     border:1px solid var(--border); background:var(--paper); color:var(--ink);
   }}
-  .spark-temp.cool {{ background:rgba(31,175,107,.1); color:#0E8A54; border-color:rgba(31,175,107,.25); }}
-  .spark-temp.warm {{ background:rgba(245,166,35,.12); color:#B87A00; border-color:rgba(245,166,35,.3); }}
-  .spark-temp.hot {{ background:rgba(229,72,77,.12); color:#C7333A; border-color:rgba(229,72,77,.3); }}
-  .spark-temp.warn {{ background:rgba(155,163,180,.12); color:var(--muted); }}
+  .spark-temp.ok {{ background:rgba(31,175,107,.1); color:#0E8A54; border-color:rgba(31,175,107,.25); }}
+  .spark-temp.warn {{ background:rgba(245,166,35,.12); color:#B87A00; border-color:rgba(245,166,35,.3); }}
+  .spark-temp.error {{ background:rgba(229,72,77,.12); color:#C7333A; border-color:rgba(229,72,77,.3); }}
+  .spark-temp.offline {{ background:rgba(155,163,180,.12); color:var(--muted); border-color:rgba(155,163,180,.25); }}
   .model-status {{ font-size:12.5px; color:var(--muted); margin-left:auto; }}
   .model-status.ok {{ color:#0E8A54; }}
   .model-status.warn {{ color:#C7333A; }}
   .model-status.busy {{ color:#B87A00; }}
+  .spark-key-bar {{
+    display:none; align-items:center; gap:12px; flex-wrap:wrap;
+    background:var(--surface); border:1px dashed var(--border); border-radius:12px;
+    padding:12px 18px; margin:-10px 0 22px;
+  }}
+  .spark-key-bar.visible {{ display:flex; }}
+  .spark-key-bar label {{ font-size:12px; font-weight:700; color:var(--muted); }}
+  .spark-key-bar input {{
+    font-family:inherit; font-size:13.5px; padding:8px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--ink); min-width:240px;
+  }}
+  .spark-key-bar button {{
+    font-family:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:8px;
+    border:1px solid var(--navy); background:var(--navy); color:#fff; cursor:pointer;
+  }}
+  .spark-key-bar .hint {{ font-size:12px; color:var(--muted); }}
   .upload-bar {{
     display:flex; align-items:center; gap:12px; flex-wrap:wrap;
     background:var(--surface); border:1px solid var(--border); border-radius:12px;
@@ -476,11 +493,18 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       </select>
       <label for="modelSelect">모델</label>
       <select id="modelSelect"><option value="qwen">qwen</option></select>
-      <span class="spark-temp" id="sparkTemp" hidden>Spark 온도 --°C</span>
+      <span class="spark-temp" id="sparkTemp" hidden>● 연결됨 --°C</span>
       <button id="applyModelBtn" type="button">적용</button>
       <button id="reanalyzeBtn" class="primary" type="button">이 모델로 재분석</button>
       <a class="compare-link" href="/compare.html">모델 비교 →</a>
       <span class="model-status" id="modelStatus">모델 설정 불러오는 중…</span>
+    </div>
+
+    <div class="spark-key-bar" id="sparkKeyBar">
+      <label for="sparkKeyInput">SPARK_API_KEY</label>
+      <input type="password" id="sparkKeyInput" autocomplete="off" placeholder="Spark API 키 입력" />
+      <button id="saveSparkKeyBtn" type="button">키 저장</button>
+      <span class="hint">.env에 저장되며, 저장 전까지 Spark 분석은 폴백됩니다.</span>
     </div>
 
     <div class="empty-note" id="emptyNote">선택한 조건에 해당하는 리뷰가 없습니다.</div>

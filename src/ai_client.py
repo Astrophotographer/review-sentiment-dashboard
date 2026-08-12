@@ -34,6 +34,8 @@ class AIClient:
         self.provider = (ai_cfg.get("provider") or "anthropic").strip().lower()
         self.api_key_env = ai_cfg.get("api_key_env", "ANTHROPIC_API_KEY")
         self.api_key = os.environ.get(self.api_key_env, "").strip()
+        self.spark_api_key_env = ai_cfg.get("spark_api_key_env", "SPARK_API_KEY")
+        self.spark_api_key = os.environ.get(self.spark_api_key_env, "").strip()
         self.sentiment_model = ai_cfg.get("sentiment_model", "claude-haiku-4-5-20251001")
         self.extract_model = ai_cfg.get("extract_model", "claude-sonnet-5")
         self.max_tokens = ai_cfg.get("max_tokens", 1024)
@@ -46,11 +48,19 @@ class AIClient:
             self.available = False
             self.logger.warning("AI provider=fallback — 규칙 기반 분석만 사용합니다.")
         elif self.provider == "spark":
-            self.available = True
-            self.logger.info(
-                f"AI provider=spark (OpenAI 호환) base_url={self.base_url} "
-                f"model={self.sentiment_model}"
-            )
+            self.available = bool(self.spark_api_key)
+            if not self.available:
+                self.logger.warning(
+                    f"{self.spark_api_key_env} 환경변수가 설정되지 않았습니다. "
+                    "Spark 호출 대신 규칙 기반 폴백 분석기를 사용합니다. "
+                    f"Spark를 쓰려면 .env 에 {self.spark_api_key_env}=... 를 넣거나 "
+                    f"export {self.spark_api_key_env}=... 후 다시 실행하세요."
+                )
+            else:
+                self.logger.info(
+                    f"AI provider=spark (OpenAI 호환) base_url={self.base_url} "
+                    f"model={self.sentiment_model}"
+                )
         else:
             self.provider = "anthropic"
             self.available = bool(self.api_key)
@@ -99,8 +109,10 @@ class AIClient:
     def _call_openai(self, model: str, system: str, user_prompt: str) -> Optional[str]:
         """vLLM / OpenAI 호환 chat completions."""
         headers = {"content-type": "application/json"}
-        # 일부 게이트웨이는 Bearer 를 요구하므로 더미 키도 허용
-        key = self.api_key or os.environ.get("OPENAI_API_KEY", "").strip() or "not-needed"
+        key = self.spark_api_key or os.environ.get(self.spark_api_key_env, "").strip()
+        if not key:
+            self.logger.error(f"Spark 호출에 {self.spark_api_key_env} 가 필요합니다.")
+            return None
         headers["authorization"] = f"Bearer {key}"
         payload = {
             "model": model,

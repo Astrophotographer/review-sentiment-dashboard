@@ -7,6 +7,7 @@ ANTHROPIC_API_KEY 없이도 규칙 기반 폴백으로 동작하므로 네트워
 
 실행 방법: python -m unittest tests/test_pipeline_smoke.py -v  (프로젝트 루트에서)
 """
+import json
 import os
 import sys
 import shutil
@@ -150,6 +151,7 @@ class TestAIFailureVsFallback(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("TEST_FAKE_ANTHROPIC_KEY", None)
+        os.environ.pop("TEST_FAKE_SPARK_KEY", None)
 
     def _client_with_key(self):
         config = {"ai": {"provider": "anthropic", "api_key_env": "TEST_FAKE_ANTHROPIC_KEY",
@@ -162,6 +164,23 @@ class TestAIFailureVsFallback(unittest.TestCase):
                           "sentiment_model": "x", "extract_model": "x",
                           "max_tokens": 100, "request_timeout_sec": 5}}
         return AIClient(config, self.logger)
+
+    def test_spark_requires_api_key(self):
+        config = {"ai": {"provider": "spark", "spark_api_key_env": "TEST_SPARK_KEY_NOT_SET",
+                         "sentiment_model": "qwen", "extract_model": "qwen",
+                         "max_tokens": 100, "request_timeout_sec": 5}}
+        client = AIClient(config, self.logger)
+        self.assertFalse(client.available)
+        result = client.analyze_sentiment("배송이 빨라서 좋아요")
+        self.assertIn(result["sentiment"], ("positive", "negative", "neutral"))
+
+    def test_spark_available_when_api_key_set(self):
+        os.environ["TEST_FAKE_SPARK_KEY"] = "spark-test-key"
+        config = {"ai": {"provider": "spark", "spark_api_key_env": "TEST_FAKE_SPARK_KEY",
+                         "sentiment_model": "qwen", "extract_model": "qwen",
+                         "max_tokens": 100, "request_timeout_sec": 5}}
+        client = AIClient(config, self.logger)
+        self.assertTrue(client.available)
 
     def test_analyze_sentiment_falls_back_silently_when_no_key_at_all(self):
         client = self._client_without_key()
@@ -195,6 +214,30 @@ class TestAIFailureVsFallback(unittest.TestCase):
             )
         self.assertIn("positive_keywords", result)
         self.assertIn("negative_keywords", result)
+
+
+class TestSparkKeySave(unittest.TestCase):
+    def test_save_spark_api_key_writes_dotenv(self):
+        import logging
+        from src.dashboard_server import save_spark_api_key
+        from src.envfile import parse_dotenv
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        cfg_path = os.path.join(tmp, "config.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"ai": {"provider": "spark", "spark_api_key_env": "SPARK_API_KEY"}}, f)
+        logger = logging.getLogger("test_spark_key")
+        logger.addHandler(logging.NullHandler())
+        os.environ.pop("SPARK_API_KEY", None)
+        save_spark_api_key(cfg_path, "test-spark-secret", logger)
+        env_path = os.path.join(tmp, ".env")
+        self.assertTrue(os.path.exists(env_path))
+        with open(env_path, encoding="utf-8") as f:
+            pairs = parse_dotenv(f.read())
+        self.assertEqual(pairs.get("SPARK_API_KEY"), "test-spark-secret")
+        self.assertEqual(os.environ.get("SPARK_API_KEY"), "test-spark-secret")
+        os.environ.pop("SPARK_API_KEY", None)
 
 
 if __name__ == "__main__":

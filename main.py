@@ -208,19 +208,25 @@ def cmd_setup():
     ANTHROPIC_API_KEY를 .env 파일에 저장해두면, 다음 실행부터는 매번
     `export ANTHROPIC_API_KEY=...`를 다시 입력하지 않아도 자동으로 적용된다."""
     ui.header("초기 설정 마법사")
-    print("  Claude API 키를 설정하면 실제 AI 감정분석/키워드추출을 사용할 수 있습니다.")
-    print("  키가 없어도 규칙 기반 폴백으로 전체 기능을 계속 사용할 수 있으니,")
+    print("  Claude 키는 Anthropic, Spark 키는 DGX Spark vLLM 호출에 필요합니다.")
+    print("  키가 없으면 해당 provider는 규칙 기반 폴백으로 동작합니다.")
     print("  나중에 설정하고 싶다면 그냥 엔터를 눌러 건너뛰어도 됩니다.")
     print(f"  {ui.dim_text('(입력한 값은 이 터미널 화면에 그대로 표시됩니다)')}\n")
 
     current = os.environ.get("ANTHROPIC_API_KEY", "")
     status = f"설정됨 ({current[:10]}...)" if current else "설정 안 됨"
-    print(f"  현재 상태: {status}\n")
+    spark_current = os.environ.get("SPARK_API_KEY", "")
+    spark_status = f"설정됨 ({spark_current[:10]}...)" if spark_current else "설정 안 됨"
+    print(f"  Claude 키: {status}")
+    print(f"  Spark 키:  {spark_status}\n")
 
     key = ui.ask("ANTHROPIC_API_KEY 입력 (건너뛰려면 엔터)")
+    spark_key = ui.ask("SPARK_API_KEY 입력 (건너뛰려면 엔터)")
     updates = {}
     if key:
         updates["ANTHROPIC_API_KEY"] = key
+    if spark_key:
+        updates["SPARK_API_KEY"] = spark_key
 
     if ui.confirm("중복 리뷰 처리 기본 정책을 upsert(덮어쓰기)로 바꿀까요? (기본은 skip)", default=False):
         _patch_config_dedup_policy("upsert")

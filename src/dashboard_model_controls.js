@@ -17,6 +17,9 @@
   const fileInput = document.getElementById("csvFileInput");
   const uploadBtn = document.getElementById("uploadCsvBtn");
   const uploadStatus = document.getElementById("uploadStatus");
+  const sparkKeyBar = document.getElementById("sparkKeyBar");
+  const sparkKeyInput = document.getElementById("sparkKeyInput");
+  const saveSparkKeyBtn = document.getElementById("saveSparkKeyBtn");
 
   function setStatus(text, kind) {
     if (!modelStatus) return;
@@ -43,6 +46,14 @@
     }
   }
 
+  function updateSparkKeyBar(provider, keySet) {
+    if (!sparkKeyBar) return;
+    const needKey = provider === "spark" && !keySet;
+    const wasHidden = !sparkKeyBar.classList.contains("visible");
+    sparkKeyBar.classList.toggle("visible", needKey);
+    if (needKey && wasHidden && sparkKeyInput) sparkKeyInput.focus();
+  }
+
   function updateSparkTemp(spark, provider) {
     if (!sparkTemp) return;
     if (provider !== "spark") {
@@ -50,13 +61,27 @@
       return;
     }
     sparkTemp.hidden = false;
+    sparkTemp.removeAttribute("title");
     if (spark && spark.ok && spark.temp_c != null) {
       const t = Number(spark.temp_c);
-      sparkTemp.textContent = `Spark GPU ${t}°C`;
-      sparkTemp.className = "spark-temp " + (t >= 80 ? "hot" : t >= 65 ? "warm" : "cool");
-    } else {
-      sparkTemp.textContent = "Spark 온도 확인 불가";
+      let kind = "ok";
+      let label = "연결됨";
+      if (t >= 90) {
+        kind = "error";
+        label = "심각한 오류발생";
+      } else if (t >= 75) {
+        kind = "warn";
+        label = "이상있음";
+      }
+      sparkTemp.textContent = `● ${label} ${t}°C`;
+      sparkTemp.className = "spark-temp " + kind;
+    } else if (spark && spark.ok) {
+      sparkTemp.textContent = "● 이상있음";
       sparkTemp.className = "spark-temp warn";
+      if (spark.error) sparkTemp.title = spark.error;
+    } else {
+      sparkTemp.textContent = "● 접속끊김";
+      sparkTemp.className = "spark-temp offline";
       if (spark && spark.error) sparkTemp.title = spark.error;
     }
   }
@@ -76,8 +101,12 @@
     fillModels(data.models, data.sentiment_model);
     modelSel.disabled = providerSel.value === "fallback";
     updateSparkTemp(data.spark, providerSel.value);
+    updateSparkKeyBar(providerSel.value, !!data.spark_key_set);
 
     const hints = [];
+    if (providerSel.value === "spark" && !data.spark_key_set) {
+      hints.push("SPARK_API_KEY 없음 — 아래 칸에 입력하세요");
+    }
     if (data.provider === "spark" && data.spark_tunnel_ok === false) {
       hints.push("vLLM 터널 끊김 (ssh -L 8000:127.0.0.1:8000 …)");
     }
@@ -109,6 +138,7 @@
   providerSel.addEventListener("change", async () => {
     modelSel.disabled = providerSel.value === "fallback";
     updateSparkTemp(lastStatus && lastStatus.spark, providerSel.value);
+    updateSparkKeyBar(providerSel.value, !!(lastStatus && lastStatus.spark_key_set));
     // provider 바꾸면 모델 목록을 서버에 물어보기 위해 임시 적용 없이 UI만 조정
     if (providerSel.value === "fallback") {
       fillModels(["규칙 기반"], "규칙 기반");
@@ -141,6 +171,39 @@
     applyStatus(data);
     return data;
   }
+
+  saveSparkKeyBtn && saveSparkKeyBtn.addEventListener("click", async () => {
+    const key = (sparkKeyInput && sparkKeyInput.value || "").trim();
+    if (!key) {
+      setStatus("Spark API 키를 입력하세요.", "warn");
+      return;
+    }
+    try {
+      saveSparkKeyBtn.disabled = true;
+      setStatus("키 저장 중…", "busy");
+      const res = await fetch("/api/spark-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "키 저장 실패");
+      if (sparkKeyInput) sparkKeyInput.value = "";
+      applyStatus(data);
+      if (providerSel.value === "spark") {
+        await postConfig("spark", modelSel.value === "규칙 기반" ? "qwen" : modelSel.value);
+      }
+      setStatus("Spark API 키를 .env에 저장했습니다.", "ok");
+    } catch (e) {
+      setStatus(String(e.message || e), "warn");
+    } finally {
+      saveSparkKeyBtn.disabled = false;
+    }
+  });
+
+  sparkKeyInput && sparkKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveSparkKeyBtn && saveSparkKeyBtn.click();
+  });
 
   applyBtn && applyBtn.addEventListener("click", async () => {
     try {

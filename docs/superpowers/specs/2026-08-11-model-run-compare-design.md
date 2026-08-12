@@ -21,27 +21,27 @@ SQLite에 스냅샷 2개 테이블을 추가한다.
 
 ### `model_runs`
 
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `id` | INTEGER PK | 런 ID |
-| `provider` | TEXT | `spark` / `anthropic` / `fallback` |
-| `model` | TEXT | 예: `qwen`, `claude-haiku-…`, `규칙 기반` |
-| `label` | TEXT | UI 표시명 (자동 생성 가능) |
-| `created_at` | TEXT | ISO 시각 |
-| `review_count` | INTEGER | 저장된 판정 수 |
-| `analyzed_count` | INTEGER | sentiment 비어 있지 않은 수 |
-| `temp_c` | REAL NULL | Spark 선택 시 저장 시점 GPU 온도 (없으면 NULL) |
-| `notes` | TEXT NULL | 선택 메모 |
+| 컬럼             | 타입       | 설명                                           |
+| ---------------- | ---------- | ---------------------------------------------- |
+| `id`             | INTEGER PK | 런 ID                                          |
+| `provider`       | TEXT       | `spark` / `anthropic` / `fallback`             |
+| `model`          | TEXT       | 예: `qwen`, `claude-haiku-…`, `규칙 기반`      |
+| `label`          | TEXT       | UI 표시명 (자동 생성 가능)                     |
+| `created_at`     | TEXT       | ISO 시각                                       |
+| `review_count`   | INTEGER    | 저장된 판정 수                                 |
+| `analyzed_count` | INTEGER    | sentiment 비어 있지 않은 수                    |
+| `temp_c`         | REAL NULL  | Spark 선택 시 저장 시점 GPU 온도 (없으면 NULL) |
+| `notes`          | TEXT NULL  | 선택 메모                                      |
 
 ### `model_run_results`
 
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `run_id` | INTEGER | FK → model_runs.id |
-| `review_id` | INTEGER | clean_reviews.id |
-| `sentiment` | TEXT NULL | positive/negative/neutral |
-| `confidence` | REAL NULL | 0~1 |
-| PRIMARY KEY | `(run_id, review_id)` | |
+| 컬럼         | 타입                  | 설명                      |
+| ------------ | --------------------- | ------------------------- |
+| `run_id`     | INTEGER               | FK → model_runs.id        |
+| `review_id`  | INTEGER               | clean_reviews.id          |
+| `sentiment`  | TEXT NULL             | positive/negative/neutral |
+| `confidence` | REAL NULL             | 0~1                       |
+| PRIMARY KEY  | `(run_id, review_id)` |                           |
 
 `clean_reviews`의 현재 감정 컬럼은 **“지금 대시보드가 보여주는 활성 결과”**로 유지한다.  
 스냅샷은 별도 보관이며, 재분석해도 과거 런은 덮어쓰지 않는다 (새 `model_runs` row 추가).
@@ -96,11 +96,11 @@ SQLite에 스냅샷 2개 테이블을 추가한다.
 
 ## API (`serve` 전용)
 
-| 메서드 | 경로 | 역할 |
-|--------|------|------|
-| GET | `/api/runs` | 스냅샷 목록 (id, provider, model, label, created_at, counts, temp_c) |
-| GET | `/api/compare?a=&b=` | 두 런 비교 JSON (summary + disagreements[]) |
-| GET | `/compare.html` | 비교 페이지 |
+| 메서드 | 경로                 | 역할                                                                 |
+| ------ | -------------------- | -------------------------------------------------------------------- |
+| GET    | `/api/runs`          | 스냅샷 목록 (id, provider, model, label, created_at, counts, temp_c) |
+| GET    | `/api/compare?a=&b=` | 두 런 비교 JSON (summary + disagreements[])                          |
+| GET    | `/compare.html`      | 비교 페이지                                                          |
 
 `/api/analyze` 완료 후 스냅샷 저장이 끝나면 `/api/runs`에 새 항목이 보여야 한다.
 
@@ -129,10 +129,10 @@ SQLite에 스냅샷 2개 테이블을 추가한다.
 
 ## 구현 순서 (참고)
 
-1. `db.py` 스키마 + seed + save/list/compare 헬퍼  
-2. `dashboard_server` analyze 완료 시 스냅샷 저장 + `/api/runs`, `/api/compare`  
-3. `compare.html` + JS  
-4. 메인 대시보드 링크  
+1. `db.py` 스키마 + seed + save/list/compare 헬퍼
+2. `dashboard_server` analyze 완료 시 스냅샷 저장 + `/api/runs`, `/api/compare`
+3. `compare.html` + JS
+4. 메인 대시보드 링크
 5. 테스트
 
 ## 승인된 결정
@@ -148,11 +148,11 @@ SQLite에 스냅샷 2개 테이블을 추가한다.
 **날짜:** 2026-08-11  
 **선택:** 고정 **3개** 측면
 
-| id | 표시명 |
-|----|--------|
-| `product` | 상품 만족도 |
+| id         | 표시명      |
+| ---------- | ----------- |
+| `product`  | 상품 만족도 |
 | `delivery` | 배송 만족도 |
-| `service` | 응대 만족도 |
+| `service`  | 응대 만족도 |
 
 각 측면 값: `positive` / `negative` / `neutral` / `not_mentioned` (+ optional confidence).
 
