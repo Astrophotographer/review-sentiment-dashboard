@@ -32,6 +32,10 @@ class AIClient:
         self.sentiment_model = ai_cfg.get("sentiment_model", "claude-haiku-4-5-20251001")
         self.extract_model = ai_cfg.get("extract_model", "claude-sonnet-5")
         self.max_tokens = ai_cfg.get("max_tokens", 1024)
+        # extract는 키워드/요약/유형별집계 등 훨씬 긴 JSON 응답이 필요해서, analyze용
+        # max_tokens를 그대로 쓰면 응답이 중간에 잘려 파싱 실패 -> 조용히 폴백되는
+        # 문제가 있었다. 그래서 extract 전용으로 더 넉넉한 값을 따로 둔다.
+        self.extract_max_tokens = ai_cfg.get("extract_max_tokens", max(self.max_tokens * 2, 2048))
         self.timeout = ai_cfg.get("request_timeout_sec", 30)
         self.available = bool(self.api_key)
         if not self.available:
@@ -42,7 +46,7 @@ class AIClient:
             )
 
     # ---------------- 내부: 실제 API 호출 ----------------
-    def _call_claude(self, model: str, system: str, user_prompt: str) -> Optional[str]:
+    def _call_claude(self, model: str, system: str, user_prompt: str, max_tokens: Optional[int] = None) -> Optional[str]:
         if not self.available:
             return None
         headers = {
@@ -52,7 +56,7 @@ class AIClient:
         }
         payload = {
             "model": model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens or self.max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user_prompt}],
         }
@@ -62,6 +66,11 @@ class AIClient:
                 self.logger.error(f"AI API 호출 실패 (status={resp.status_code}): {resp.text[:200]}")
                 return None
             data = resp.json()
+            if data.get("stop_reason") == "max_tokens":
+                self.logger.warning(
+                    f"AI 응답이 max_tokens({max_tokens or self.max_tokens}) 제한에 걸려 중간에 잘렸습니다. "
+                    "JSON 파싱이 실패할 수 있습니다 (config.json의 max_tokens/extract_max_tokens를 늘려보세요)."
+                )
             text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
             return "\n".join(text_blocks).strip()
         except requests.RequestException as e:
@@ -112,6 +121,11 @@ class AIClient:
                 confidence = 0.75
             return {"sentiment": parsed["sentiment"], "confidence": round(max(0.0, min(1.0, confidence)), 2)}
 
+        if result and not parsed:
+            # HTTP 호출 자체는 성공했지만(200 OK) 응답을 JSON으로 못 읽은 경우.
+            # 이전에는 아무 로그도 안 남기고 조용히 실패 처리되어 원인 파악이 불가능했다.
+            self.logger.error(f"AI 응답을 JSON으로 파싱하지 못했습니다. 원문 일부: {result[:200]!r}")
+
         # API 키는 설정되어 있지만 호출/파싱이 실패한 경우 -> 조용히 넘어가지 않고 진짜 실패로 처리한다.
         raise RuntimeError("AI 감정분석 API 호출에 실패했습니다 (크레딧 부족/인증오류/네트워크 오류 등 - logs/app.log 확인)")
 
@@ -153,14 +167,20 @@ class AIClient:
         )
         joined = "\n".join(f"- ({r.get('sentiment','?')}, {r.get('rating','?')}점) {r.get('review_text','')}" for r in reviews[:200])
         user_prompt = f"[분석 조건: {condition_desc}]\n리뷰 목록:\n{joined}"
-        result = self._call_claude(self.extract_model, system, user_prompt)
+        result = self._call_claude(self.extract_model, system, user_prompt, max_tokens=self.extract_max_tokens)
         parsed = self._extract_json(result) if result else None
         if parsed:
             return parsed
 
+        if result and not parsed:
+            # HTTP 호출 자체는 성공했지만(200 OK) 응답을 JSON으로 못 읽은 경우
+            # (흔한 원인: max_tokens 제한에 걸려 응답이 중간에 잘림). 원인 파악이 되도록
+            # 원문 일부를 남긴다.
+            self.logger.error(f"AI 추출 응답을 JSON으로 파싱하지 못했습니다. 원문 일부: {result[:300]!r}")
+
         self.logger.warning(
             "AI 키워드/요약 추출 호출이 실패해 규칙 기반 결과로 대체합니다 "
-            "(크레딧 부족/인증오류/네트워크 오류 등 - logs/app.log 확인)."
+            "(크레딧 부족/인증오류/네트워크 오류/응답 잘림 등 - logs/app.log 확인)."
         )
         return self._fallback_extract(reviews)
 

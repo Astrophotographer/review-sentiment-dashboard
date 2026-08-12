@@ -5,6 +5,7 @@
     "sentiment_model": "claude-haiku-4-5-20251001",
     "extract_model": "claude-sonnet-5",
     "max_tokens": 1024,
+    "extract_max_tokens": 2048,
     "request_timeout_sec": 30
   },
   "dedup_policy": "skip",

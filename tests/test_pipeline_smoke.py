@@ -10,6 +10,7 @@ ANTHROPIC_API_KEY 없이도 규칙 기반 폴백으로 동작하므로 네트워
 import os
 import sys
 import shutil
+import logging
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -197,6 +198,33 @@ class TestAIFailureVsFallback(unittest.TestCase):
         self.assertTrue(all(isinstance(k, dict) and "keyword" in k and "count" in k for k in pos))
         good = next(k for k in pos if k["keyword"] == "좋")
         self.assertEqual(good["count"], 2, "'좋'이 두 리뷰에 등장했으므로 count=2 여야 한다")
+
+    def test_extract_uses_larger_max_tokens_than_analyze(self):
+        # extract는 analyze보다 훨씬 긴 JSON을 요구하므로, 같은 max_tokens를 쓰면
+        # 응답이 중간에 잘려 파싱 실패로 이어질 수 있다. 전용 예산이 더 커야 한다.
+        client = self._client_with_key()
+        self.assertGreater(client.extract_max_tokens, client.max_tokens)
+
+    def test_extract_logs_error_when_response_is_truncated_and_unparseable(self):
+        # 회귀 테스트: 응답이 200 OK로 오긴 했지만 JSON이 중간에 잘려 파싱이 실패하는
+        # 경우, 예전에는 아무 로그도 안 남기고 조용히 폴백으로 넘어갔다. 이제는 원문
+        # 일부를 담은 ERROR 로그를 남기고, 그래도 폴백 결과 자체는 정상 반환해야 한다.
+        client = self._client_with_key()
+        logged = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                logged.append((record.levelname, record.getMessage()))
+
+        self.logger.addHandler(_Capture())
+        truncated_json = '{"positive_keywords": [{"keyword": "좋아요", "count": 3}], "negative_keyw'
+        with patch.object(client, "_call_claude", return_value=truncated_json):
+            result = client.extract_insights(
+                [{"review_text": "좋아요", "sentiment": "positive", "rating": 5}], "감정=전체"
+            )
+        self.assertIn("positive_keywords", result, "파싱 실패해도 폴백 결과는 정상 반환되어야 한다")
+        error_logs = [m for lvl, m in logged if lvl == "ERROR" and "파싱하지 못했습니다" in m]
+        self.assertEqual(len(error_logs), 1, "파싱 실패 원인이 ERROR 로그로 남아야 한다")
 
     def test_extract_insights_falls_back_without_crashing_when_key_present_but_call_fails(self):
         # extract는 analyze와 달리 "스킵" 요구사항이 없으므로, 실패해도 대시보드가
