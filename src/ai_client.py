@@ -3,12 +3,13 @@ AI API 클라이언트 모듈
 ----------------------
 지원 provider:
   - anthropic : Anthropic Claude 공식 REST API
+  - openai    : OpenAI 공식 API (OpenAI 호환 /v1/chat/completions)
   - spark     : DGX Spark vLLM (OpenAI 호환 /v1/chat/completions)
   - fallback  : 규칙 기반만 사용 (API 호출 없음)
 
 - API 키/엔드포인트는 코드에 하드코딩하지 않고 config.json + 환경변수에서 읽는다.
-- provider=fallback 이거나 anthropic 키가 없으면 규칙 기반 폴백으로 동작한다.
-- anthropic 키는 있는데 호출이 실패하면(크레딧 부족 등) 감정분석은 예외를 던져
+- provider=fallback 이거나 키가 없으면 규칙 기반 폴백으로 동작한다.
+- 키가 있는데 호출이 실패하면(크레딧 부족 등) 감정분석은 예외를 던져
   호출부(analyzer)가 해당 건을 스킵한다.
 """
 import os
@@ -21,6 +22,7 @@ from .aspects import ASPECT_IDS, infer_aspects_from_text, normalize_aspects
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
 
 POSITIVE_HINTS = ["좋", "만족", "빠르", "편해", "훌륭", "추천", "예뻐", "친절", "가성비", "great", "good", "happy", "love"]
 NEGATIVE_HINTS = ["불량", "늦", "실망", "안돼", "안됨", "불편", "느리", "나빠", "최악", "환불", "반품",
@@ -36,11 +38,14 @@ class AIClient:
         self.api_key = os.environ.get(self.api_key_env, "").strip()
         self.spark_api_key_env = ai_cfg.get("spark_api_key_env", "SPARK_API_KEY")
         self.spark_api_key = os.environ.get(self.spark_api_key_env, "").strip()
+        self.openai_api_key_env = ai_cfg.get("openai_api_key_env", "OPENAI_API_KEY")
+        self.openai_api_key = os.environ.get(self.openai_api_key_env, "").strip()
         self.sentiment_model = ai_cfg.get("sentiment_model", "claude-haiku-4-5-20251001")
         self.extract_model = ai_cfg.get("extract_model", "claude-sonnet-5")
         self.max_tokens = ai_cfg.get("max_tokens", 1024)
         self.timeout = ai_cfg.get("request_timeout_sec", 30)
         self.base_url = (ai_cfg.get("base_url") or "http://127.0.0.1:8000/v1").rstrip("/")
+        self.openai_base_url = (ai_cfg.get("openai_base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
         self.enable_thinking = bool(ai_cfg.get("enable_thinking", False))
         self.spark_health_url = ai_cfg.get("spark_health_url", "http://100.114.218.1:8080/health")
 
@@ -61,6 +66,19 @@ class AIClient:
                     f"AI provider=spark (OpenAI 호환) base_url={self.base_url} "
                     f"model={self.sentiment_model}"
                 )
+        elif self.provider == "openai":
+            self.available = bool(self.openai_api_key)
+            if not self.available:
+                self.logger.warning(
+                    f"{self.openai_api_key_env} 환경변수가 설정되지 않았습니다. "
+                    "OpenAI 호출 대신 규칙 기반 폴백 분석기를 사용합니다. "
+                    f"OpenAI를 쓰려면 .env 에 {self.openai_api_key_env}=... 를 넣으세요."
+                )
+            else:
+                self.logger.info(
+                    f"AI provider=openai base_url={self.openai_base_url} "
+                    f"model={self.sentiment_model}"
+                )
         else:
             self.provider = "anthropic"
             self.available = bool(self.api_key)
@@ -69,14 +87,20 @@ class AIClient:
                     f"{self.api_key_env} 환경변수가 설정되지 않았습니다. "
                     "실제 AI 호출 대신 규칙 기반 폴백 분석기를 사용합니다. "
                     f"실제 AI 분석을 사용하려면: export {self.api_key_env}=sk-ant-xxxx "
-                    "또는 config.json 에서 provider 를 spark / fallback 으로 바꾸세요."
+                    "또는 config.json 에서 provider 를 spark / openai / fallback 으로 바꾸세요."
                 )
+
+    def _openai_compat_base_and_key(self):
+        """(base_url, api_key, env_name) for OpenAI-compatible providers."""
+        if self.provider == "openai":
+            return self.openai_base_url, self.openai_api_key, self.openai_api_key_env
+        return self.base_url, self.spark_api_key, self.spark_api_key_env
 
     # ---------------- 내부: LLM 호출 ----------------
     def _call_llm(self, model: str, system: str, user_prompt: str) -> Optional[str]:
         if not self.available:
             return None
-        if self.provider == "spark":
+        if self.provider in ("spark", "openai"):
             return self._call_openai(model, system, user_prompt)
         return self._call_claude(model, system, user_prompt)
 
@@ -107,11 +131,13 @@ class AIClient:
             return None
 
     def _call_openai(self, model: str, system: str, user_prompt: str) -> Optional[str]:
-        """vLLM / OpenAI 호환 chat completions."""
+        """OpenAI / vLLM OpenAI 호환 chat completions."""
+        base_url, key, env_name = self._openai_compat_base_and_key()
         headers = {"content-type": "application/json"}
-        key = self.spark_api_key or os.environ.get(self.spark_api_key_env, "").strip()
         if not key:
-            self.logger.error(f"Spark 호출에 {self.spark_api_key_env} 가 필요합니다.")
+            key = os.environ.get(env_name, "").strip()
+        if not key:
+            self.logger.error(f"{self.provider} 호출에 {env_name} 가 필요합니다.")
             return None
         headers["authorization"] = f"Bearer {key}"
         payload = {
@@ -122,13 +148,16 @@ class AIClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
-            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
-        url = f"{self.base_url}/chat/completions"
+        if self.provider == "spark":
+            payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
+        url = f"{base_url}/chat/completions"
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
             if resp.status_code != 200:
-                self.logger.error(f"Spark/OpenAI API 호출 실패 (status={resp.status_code}): {resp.text[:200]}")
+                self.logger.error(
+                    f"{self.provider} API 호출 실패 (status={resp.status_code}): {resp.text[:200]}"
+                )
                 return None
             data = resp.json()
             msg = (data.get("choices") or [{}])[0].get("message") or {}
@@ -141,7 +170,7 @@ class AIClient:
                 return str(reasoning).strip()
             return None
         except requests.RequestException as e:
-            self.logger.error(f"Spark/OpenAI API 요청 중 네트워크 오류: {e}")
+            self.logger.error(f"{self.provider} API 요청 중 네트워크 오류: {e}")
             return None
 
     @staticmethod
@@ -294,17 +323,21 @@ class AIClient:
             "positive_keywords": [w for w, _ in pos_sorted] or ["데이터 부족"],
             "negative_keywords": [w for w, _ in neg_sorted] or ["데이터 부족"],
             "summary": f"총 {len(reviews)}건의 리뷰를 규칙 기반으로 요약했습니다. "
-                       f"(Spark/Anthropic provider 를 선택하면 AI 요약을 받을 수 있습니다.)",
-            "suggestions": ["대시보드에서 채점 모델을 Spark(qwen) 등으로 바꾼 뒤 재분석해 보세요."],
+                       f"(Spark/OpenAI/Anthropic provider 를 선택하면 AI 요약을 받을 수 있습니다.)",
+            "suggestions": ["대시보드에서 채점 모델을 Spark(qwen) 또는 OpenAI 등으로 바꾼 뒤 재분석해 보세요."],
             "topic_breakdown": topic_breakdown,
         }
 
     def list_remote_models(self) -> list:
-        """Spark(OpenAI 호환)에서 사용 가능한 모델 id 목록을 가져온다."""
-        if self.provider != "spark":
+        """OpenAI 호환 /models 에서 사용 가능한 모델 id 목록을 가져온다."""
+        if self.provider not in ("spark", "openai"):
             return [self.sentiment_model]
+        base_url, key, _env = self._openai_compat_base_and_key()
+        headers = {}
+        if key:
+            headers["authorization"] = f"Bearer {key}"
         try:
-            resp = requests.get(f"{self.base_url}/models", timeout=5)
+            resp = requests.get(f"{base_url}/models", headers=headers or None, timeout=5)
             if resp.status_code != 200:
                 return [self.sentiment_model]
             data = resp.json()

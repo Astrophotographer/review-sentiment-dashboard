@@ -488,6 +488,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       <label for="providerSelect">채점 엔진</label>
       <select id="providerSelect">
         <option value="spark">Spark (vLLM)</option>
+        <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic Claude</option>
         <option value="fallback">규칙 기반 폴백</option>
       </select>
@@ -500,11 +501,11 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       <span class="model-status" id="modelStatus">모델 설정 불러오는 중…</span>
     </div>
 
-    <div class="spark-key-bar" id="sparkKeyBar">
-      <label for="sparkKeyInput">SPARK_API_KEY</label>
-      <input type="password" id="sparkKeyInput" autocomplete="off" placeholder="Spark API 키 입력" />
-      <button id="saveSparkKeyBtn" type="button">키 저장</button>
-      <span class="hint">.env에 저장되며, 저장 전까지 Spark 분석은 폴백됩니다.</span>
+    <div class="spark-key-bar" id="providerKeyBar">
+      <label for="providerKeyInput" id="providerKeyLabel">SPARK_API_KEY</label>
+      <input type="password" id="providerKeyInput" autocomplete="off" placeholder="API 키 입력" />
+      <button id="saveProviderKeyBtn" type="button">키 저장</button>
+      <span class="hint" id="providerKeyHint">.env에 저장되며, 저장 전까지 해당 provider 분석은 폴백됩니다.</span>
     </div>
 
     <div class="empty-note" id="emptyNote">선택한 조건에 해당하는 리뷰가 없습니다.</div>

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .ai_client import AIClient
+from .model_display import resolve_snapshot_model
 from .utils import now_str
 
 
@@ -16,6 +17,7 @@ def run_label(provider: str, model: str) -> str:
     m = model or "-"
     names = {
         "spark": "Spark",
+        "openai": "OpenAI",
         "anthropic": "Anthropic",
         "fallback": "규칙 기반",
     }
@@ -35,30 +37,36 @@ def snapshot_after_analyze(db, config: dict, logger, ai_client: Optional[AIClien
     ai = config.get("ai", {})
     provider = (ai.get("provider") or "anthropic").lower()
     if provider == "fallback":
-        model = "규칙 기반"
+        model_id = "규칙 기반"
     else:
-        model = ai.get("sentiment_model") or ("qwen" if provider == "spark" else "unknown")
+        model_id = ai.get("sentiment_model") or ("qwen" if provider == "spark" else "unknown")
 
     temp_c = None
+    health = None
     client = ai_client
     if provider == "spark":
         try:
             client = client or AIClient(config, logger)
-            status = client.spark_device_status()
-            if status.get("ok") and status.get("temp_c") is not None:
-                temp_c = float(status["temp_c"])
+            health = client.spark_device_status()
+            if health.get("ok") and health.get("temp_c") is not None:
+                temp_c = float(health["temp_c"])
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Spark 온도 기록 실패(스냅샷은 계속): {e}")
 
+    display_model = resolve_snapshot_model(provider, model_id, health)
+
     run_id = db.save_model_run(
         provider=provider,
-        model=model,
-        label=run_label(provider, model),
+        model=display_model,
+        label=run_label(provider, display_model),
         created_at=now_str(),
         temp_c=temp_c,
         notes=None,
     )
-    logger.info(f"모델 스냅샷 저장: run_id={run_id} provider={provider} model={model}")
+    logger.info(
+        f"모델 스냅샷 저장: run_id={run_id} provider={provider} "
+        f"model={display_model} (id={model_id})"
+    )
     return run_id
 
 
@@ -66,13 +74,21 @@ def ensure_seed_snapshot(db, config: dict, logger) -> Optional[int]:
     ai = config.get("ai", {})
     provider = (ai.get("provider") or "fallback").lower()
     if provider == "fallback":
-        model = "규칙 기반"
+        model_id = "규칙 기반"
     else:
-        model = ai.get("sentiment_model") or ("qwen" if provider == "spark" else "기존")
-    names = {"spark": "Spark", "anthropic": "Anthropic", "fallback": "규칙 기반"}
+        model_id = ai.get("sentiment_model") or ("qwen" if provider == "spark" else "기존")
+    display_model = resolve_snapshot_model(provider, model_id, None)
+    names = {
+        "spark": "Spark",
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "fallback": "규칙 기반",
+    }
     engine = names.get(provider, provider)
-    label = f"{engine} / {model} · 시드(기존 분석)"
-    run_id = db.seed_model_run_if_empty(provider, model, label, now_str())
+    label = f"{engine} / {display_model} · 시드(기존 분석)"
+    run_id = db.seed_model_run_if_empty(provider, display_model, label, now_str())
     if run_id:
-        logger.info(f"모델 스냅샷 시드 생성: run_id={run_id} provider={provider} model={model}")
+        logger.info(
+            f"모델 스냅샷 시드 생성: run_id={run_id} provider={provider} model={display_model}"
+        )
     return run_id

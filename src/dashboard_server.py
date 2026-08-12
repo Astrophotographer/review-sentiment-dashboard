@@ -22,13 +22,21 @@ import requests
 from .ai_client import AIClient
 from . import analyzer, extractor, alerts, visualizer, reporter, model_runs, ingest, cleaner, envfile
 from .db import Database
+from .model_display import resolve_snapshot_model
 
 
 PROVIDER_OPTIONS = [
-    {"id": "spark", "label": "Spark (vLLM / qwen)", "needs_model": True},
+    {"id": "spark", "label": "Spark (vLLM)", "needs_model": True},
+    {"id": "openai", "label": "OpenAI", "needs_model": True},
     {"id": "anthropic", "label": "Anthropic Claude", "needs_model": True},
     {"id": "fallback", "label": "규칙 기반 폴백", "needs_model": False},
 ]
+
+PROVIDER_KEY_ENV = {
+    "spark": ("spark_api_key_env", "SPARK_API_KEY"),
+    "openai": ("openai_api_key_env", "OPENAI_API_KEY"),
+    "anthropic": ("api_key_env", "ANTHROPIC_API_KEY"),
+}
 
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024  # 20MB
 UPLOAD_ALLOWED_EXT = {".csv", ".xlsx", ".xls"}
@@ -87,6 +95,19 @@ def _anthropic_models(config: dict) -> list:
     return models
 
 
+def _openai_models(config: dict, logger) -> list:
+    client = AIClient(config, logger)
+    client.provider = "openai"
+    client.available = True
+    client.openai_base_url = (
+        config.get("ai", {}).get("openai_base_url") or "https://api.openai.com/v1"
+    ).rstrip("/")
+    client.openai_api_key = os.environ.get(
+        config.get("ai", {}).get("openai_api_key_env", "OPENAI_API_KEY"), ""
+    ).strip()
+    return client.list_remote_models()
+
+
 def _spark_models(config: dict, logger) -> list:
     client = AIClient(config, logger)
     # 목록 조회를 위해 잠깐 provider 를 spark 로 맞춘다
@@ -106,6 +127,8 @@ def build_status(config_path: str, logger) -> dict:
         models = _spark_models(config, logger)
         spark_client = AIClient(config, logger)
         spark = spark_client.spark_device_status()
+    elif provider == "openai":
+        models = _openai_models(config, logger)
     elif provider == "anthropic":
         models = _anthropic_models(config)
     else:
@@ -124,14 +147,22 @@ def build_status(config_path: str, logger) -> dict:
     except requests.RequestException:
         tunnel_ok = False
 
+    anthropic_env = ai.get("api_key_env", "ANTHROPIC_API_KEY")
+    spark_env = ai.get("spark_api_key_env", "SPARK_API_KEY")
+    openai_env = ai.get("openai_api_key_env", "OPENAI_API_KEY")
+    model_id = ai.get("sentiment_model")
+    display = resolve_snapshot_model(provider, model_id or "", spark if provider == "spark" else None)
+
     return {
         "provider": provider,
-        "sentiment_model": ai.get("sentiment_model"),
+        "sentiment_model": model_id,
         "extract_model": ai.get("extract_model"),
+        "display_model": display,
         "providers": PROVIDER_OPTIONS,
         "models": models,
-        "anthropic_key_set": bool(os.environ.get(ai.get("api_key_env", "ANTHROPIC_API_KEY"), "").strip()),
-        "spark_key_set": bool(os.environ.get(ai.get("spark_api_key_env", "SPARK_API_KEY"), "").strip()),
+        "anthropic_key_set": bool(os.environ.get(anthropic_env, "").strip()),
+        "spark_key_set": bool(os.environ.get(spark_env, "").strip()),
+        "openai_key_set": bool(os.environ.get(openai_env, "").strip()),
         "spark": spark,
         "spark_tunnel_ok": tunnel_ok,
         "base_url": ai.get("base_url"),
@@ -142,7 +173,7 @@ def apply_provider_config(config_path: str, provider: str, model: Optional[str],
     config = _read_config(config_path)
     ai = config.setdefault("ai", {})
     provider = (provider or "").strip().lower()
-    if provider not in ("spark", "anthropic", "fallback"):
+    if provider not in ("spark", "openai", "anthropic", "fallback"):
         raise ValueError(f"지원하지 않는 provider: {provider}")
 
     ai["provider"] = provider
@@ -157,11 +188,19 @@ def apply_provider_config(config_path: str, provider: str, model: Optional[str],
         else:
             ai.setdefault("sentiment_model", "qwen")
             ai.setdefault("extract_model", "qwen")
+    elif provider == "openai":
+        ai.setdefault("openai_base_url", "https://api.openai.com/v1")
+        ai.setdefault("openai_api_key_env", "OPENAI_API_KEY")
+        ai.setdefault("request_timeout_sec", 60)
+        if model:
+            ai["sentiment_model"] = model
+            ai["extract_model"] = model
+        else:
+            ai.setdefault("sentiment_model", "gpt-4o-mini")
+            ai.setdefault("extract_model", "gpt-4o-mini")
     elif provider == "anthropic":
         if model:
             ai["sentiment_model"] = model
-            # extract 는 더 큰 모델을 유지할 수 있게, 감정모델만 강제하지 않음
-            # 다만 UI에서 하나로 고르면 둘 다 맞춤
             ai["extract_model"] = model
     else:
         # fallback
@@ -172,21 +211,30 @@ def apply_provider_config(config_path: str, provider: str, model: Optional[str],
     return build_status(config_path, logger)
 
 
-def save_spark_api_key(config_path: str, key: str, logger) -> dict:
-    """대시보드에서 입력한 Spark 키를 .env 에 저장하고 현재 프로세스 환경변수에도 반영한다."""
+def save_provider_api_key(config_path: str, provider: str, key: str, logger) -> dict:
+    """대시보드에서 입력한 provider API 키를 .env 에 저장하고 프로세스 환경변수에도 반영한다."""
+    provider = (provider or "").strip().lower()
     key = (key or "").strip()
+    if provider not in PROVIDER_KEY_ENV:
+        raise ValueError(f"키를 저장할 수 없는 provider: {provider}")
     if not key:
-        raise ValueError("SPARK_API_KEY 가 비어 있습니다.")
+        raise ValueError("API 키가 비어 있습니다.")
     if len(key) > 512:
         raise ValueError("키가 너무 깁니다.")
     config = _read_config(config_path)
-    env_name = config.get("ai", {}).get("spark_api_key_env", "SPARK_API_KEY")
+    cfg_key, default_env = PROVIDER_KEY_ENV[provider]
+    env_name = config.get("ai", {}).get(cfg_key, default_env)
     env_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), ".env")
     envfile.write_dotenv(env_path, {env_name: key})
     envfile.ensure_gitignored(env_path)
     os.environ[env_name] = key
-    logger.info(f"{env_name} 을 .env 에 저장했습니다.")
+    logger.info(f"{env_name} 을 .env 에 저장했습니다 (provider={provider}).")
     return build_status(config_path, logger)
+
+
+def save_spark_api_key(config_path: str, key: str, logger) -> dict:
+    """호환용: Spark 키 저장 → save_provider_api_key 위임."""
+    return save_provider_api_key(config_path, "spark", key, logger)
 
 
 def _rebuild_dashboard(db, config, logger, job: _JobState):
@@ -468,6 +516,19 @@ def make_handler(
                         logger=logger,
                     )
                     self._send_json(200, status)
+                except Exception as e:  # noqa: BLE001
+                    self._send_json(400, {"error": str(e)})
+                return
+            if parsed.path == "/api/provider-key":
+                try:
+                    data = self._read_json()
+                    status = save_provider_api_key(
+                        config_path,
+                        data.get("provider") or "",
+                        data.get("key") or "",
+                        logger,
+                    )
+                    self._send_json(200, {"ok": True, **status})
                 except Exception as e:  # noqa: BLE001
                     self._send_json(400, {"error": str(e)})
                 return

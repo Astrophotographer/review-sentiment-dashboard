@@ -1,5 +1,6 @@
 // ============================================================
-// 채점 모델 선택 + Spark 온도 (python main.py serve 로 열었을 때만 API 동작)
+// 채점 모델 선택 + provider API 키 + Spark 온도
+// (python main.py serve 로 열었을 때만 API 동작)
 // ============================================================
 (function () {
   const providerSel = document.getElementById("providerSelect");
@@ -17,9 +18,17 @@
   const fileInput = document.getElementById("csvFileInput");
   const uploadBtn = document.getElementById("uploadCsvBtn");
   const uploadStatus = document.getElementById("uploadStatus");
-  const sparkKeyBar = document.getElementById("sparkKeyBar");
-  const sparkKeyInput = document.getElementById("sparkKeyInput");
-  const saveSparkKeyBtn = document.getElementById("saveSparkKeyBtn");
+  const providerKeyBar = document.getElementById("providerKeyBar") || document.getElementById("sparkKeyBar");
+  const providerKeyLabel = document.getElementById("providerKeyLabel");
+  const providerKeyInput = document.getElementById("providerKeyInput") || document.getElementById("sparkKeyInput");
+  const saveProviderKeyBtn = document.getElementById("saveProviderKeyBtn") || document.getElementById("saveSparkKeyBtn");
+  const providerKeyHint = document.getElementById("providerKeyHint");
+
+  const KEY_META = {
+    spark: { env: "SPARK_API_KEY", placeholder: "Spark API 키 입력", flag: "spark_key_set" },
+    openai: { env: "OPENAI_API_KEY", placeholder: "OpenAI API 키 입력", flag: "openai_key_set" },
+    anthropic: { env: "ANTHROPIC_API_KEY", placeholder: "Anthropic API 키 입력", flag: "anthropic_key_set" },
+  };
 
   function setStatus(text, kind) {
     if (!modelStatus) return;
@@ -31,6 +40,12 @@
     if (!uploadStatus) return;
     uploadStatus.textContent = text || "";
     uploadStatus.className = "upload-status" + (kind ? " " + kind : "");
+  }
+
+  function keySetFor(provider, data) {
+    const meta = KEY_META[provider];
+    if (!meta || !data) return true;
+    return !!data[meta.flag];
   }
 
   function fillModels(models, selected) {
@@ -46,12 +61,20 @@
     }
   }
 
-  function updateSparkKeyBar(provider, keySet) {
-    if (!sparkKeyBar) return;
-    const needKey = provider === "spark" && !keySet;
-    const wasHidden = !sparkKeyBar.classList.contains("visible");
-    sparkKeyBar.classList.toggle("visible", needKey);
-    if (needKey && wasHidden && sparkKeyInput) sparkKeyInput.focus();
+  function updateProviderKeyBar(provider, data) {
+    if (!providerKeyBar) return;
+    const meta = KEY_META[provider];
+    const needKey = !!meta && !keySetFor(provider, data);
+    const wasHidden = !providerKeyBar.classList.contains("visible");
+    providerKeyBar.classList.toggle("visible", needKey);
+    if (meta) {
+      if (providerKeyLabel) providerKeyLabel.textContent = meta.env;
+      if (providerKeyInput) providerKeyInput.placeholder = meta.placeholder;
+      if (providerKeyHint) {
+        providerKeyHint.textContent = `.env에 저장되며, 저장 전까지 ${meta.env} 분석은 폴백됩니다.`;
+      }
+    }
+    if (needKey && wasHidden && providerKeyInput) providerKeyInput.focus();
   }
 
   function updateSparkTemp(spark, provider) {
@@ -86,6 +109,12 @@
     }
   }
 
+  function defaultModelFor(provider) {
+    if (provider === "spark") return "qwen";
+    if (provider === "openai") return "gpt-4o-mini";
+    return null;
+  }
+
   function applyStatus(data) {
     lastStatus = data;
     const providers = data.providers || [];
@@ -101,20 +130,19 @@
     fillModels(data.models, data.sentiment_model);
     modelSel.disabled = providerSel.value === "fallback";
     updateSparkTemp(data.spark, providerSel.value);
-    updateSparkKeyBar(providerSel.value, !!data.spark_key_set);
+    updateProviderKeyBar(providerSel.value, data);
 
     const hints = [];
-    if (providerSel.value === "spark" && !data.spark_key_set) {
-      hints.push("SPARK_API_KEY 없음 — 아래 칸에 입력하세요");
+    const p = providerSel.value;
+    if (KEY_META[p] && !keySetFor(p, data)) {
+      hints.push(`${KEY_META[p].env} 없음 — 아래 칸에 입력하세요`);
     }
     if (data.provider === "spark" && data.spark_tunnel_ok === false) {
       hints.push("vLLM 터널 끊김 (ssh -L 8000:127.0.0.1:8000 …)");
     }
-    if (data.provider === "anthropic" && !data.anthropic_key_set) {
-      hints.push("ANTHROPIC_API_KEY 없음");
-    }
+    const shown = data.display_model || data.sentiment_model || "-";
     if (hints.length) setStatus(hints.join(" · "), "warn");
-    else setStatus(`현재: ${data.provider} / ${data.sentiment_model || "-"}`, "ok");
+    else setStatus(`현재: ${data.provider} / ${shown}`, "ok");
   }
 
   async function fetchStatus() {
@@ -138,25 +166,18 @@
   providerSel.addEventListener("change", async () => {
     modelSel.disabled = providerSel.value === "fallback";
     updateSparkTemp(lastStatus && lastStatus.spark, providerSel.value);
-    updateSparkKeyBar(providerSel.value, !!(lastStatus && lastStatus.spark_key_set));
-    // provider 바꾸면 모델 목록을 서버에 물어보기 위해 임시 적용 없이 UI만 조정
+    updateProviderKeyBar(providerSel.value, lastStatus);
     if (providerSel.value === "fallback") {
       fillModels(["규칙 기반"], "규칙 기반");
-    } else if (providerSel.value === "spark") {
-      setStatus("Spark 모델 목록 불러오는 중…");
-      try {
-        // 설정 저장 전에 목록을 보려면 status의 spark 목록이 현재 provider 기준이라
-        // 일단 apply 후 다시 읽어온다
-        await postConfig(providerSel.value, modelSel.value === "규칙 기반" ? "qwen" : modelSel.value);
-      } catch (e) {
-        setStatus(String(e.message || e), "warn");
-      }
-    } else if (providerSel.value === "anthropic") {
-      try {
-        await postConfig("anthropic", modelSel.value === "규칙 기반" ? null : modelSel.value);
-      } catch (e) {
-        setStatus(String(e.message || e), "warn");
-      }
+      return;
+    }
+    const fallback = defaultModelFor(providerSel.value);
+    const model = modelSel.value === "규칙 기반" ? fallback : modelSel.value;
+    setStatus("모델 목록 불러오는 중…");
+    try {
+      await postConfig(providerSel.value, model);
+    } catch (e) {
+      setStatus(String(e.message || e), "warn");
     }
   });
 
@@ -172,37 +193,44 @@
     return data;
   }
 
-  saveSparkKeyBtn && saveSparkKeyBtn.addEventListener("click", async () => {
-    const key = (sparkKeyInput && sparkKeyInput.value || "").trim();
+  saveProviderKeyBtn && saveProviderKeyBtn.addEventListener("click", async () => {
+    const provider = providerSel.value;
+    const meta = KEY_META[provider];
+    const key = (providerKeyInput && providerKeyInput.value || "").trim();
+    if (!meta) {
+      setStatus("이 엔진은 API 키가 필요 없습니다.", "warn");
+      return;
+    }
     if (!key) {
-      setStatus("Spark API 키를 입력하세요.", "warn");
+      setStatus(`${meta.env} 를 입력하세요.`, "warn");
       return;
     }
     try {
-      saveSparkKeyBtn.disabled = true;
+      saveProviderKeyBtn.disabled = true;
       setStatus("키 저장 중…", "busy");
-      const res = await fetch("/api/spark-key", {
+      const res = await fetch("/api/provider-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key }),
+        body: JSON.stringify({ provider, key }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "키 저장 실패");
-      if (sparkKeyInput) sparkKeyInput.value = "";
+      if (providerKeyInput) providerKeyInput.value = "";
       applyStatus(data);
-      if (providerSel.value === "spark") {
-        await postConfig("spark", modelSel.value === "규칙 기반" ? "qwen" : modelSel.value);
+      if (KEY_META[provider]) {
+        const fallback = defaultModelFor(provider);
+        await postConfig(provider, modelSel.value === "규칙 기반" ? fallback : modelSel.value);
       }
-      setStatus("Spark API 키를 .env에 저장했습니다.", "ok");
+      setStatus(`${meta.env} 를 .env에 저장했습니다.`, "ok");
     } catch (e) {
       setStatus(String(e.message || e), "warn");
     } finally {
-      saveSparkKeyBtn.disabled = false;
+      saveProviderKeyBtn.disabled = false;
     }
   });
 
-  sparkKeyInput && sparkKeyInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveSparkKeyBtn && saveSparkKeyBtn.click();
+  providerKeyInput && providerKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveProviderKeyBtn && saveProviderKeyBtn.click();
   });
 
   applyBtn && applyBtn.addEventListener("click", async () => {

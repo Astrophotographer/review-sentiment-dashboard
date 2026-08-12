@@ -11,7 +11,7 @@
   let runsById = {};
 
   const SENT = { positive: "긍정", neutral: "중립", negative: "부정", null: "미분석" };
-  const ENGINE = { spark: "Spark", anthropic: "Anthropic", fallback: "규칙 기반" };
+  const ENGINE = { spark: "Spark", openai: "OpenAI", anthropic: "Anthropic", fallback: "규칙 기반" };
 
   function setStatus(msg, kind) {
     if (!statusEl) return;
@@ -29,9 +29,34 @@
     return ENGINE[(provider || "").toLowerCase()] || provider || "?";
   }
 
+  function formatModelDisplay(name) {
+    if (!name) return "-";
+    const parts = String(name).replace(/[_-]/g, " ").split(/\s+/).filter(Boolean);
+    const cleaned = parts.filter((p) => !/^20\d{2}$/.test(p) && !/^20\d{6}$/.test(p));
+    if (!cleaned.length) return String(name);
+    const merged = [];
+    for (let i = 0; i < cleaned.length; i++) {
+      if (/^\d+$/.test(cleaned[i]) && i + 1 < cleaned.length && /^\d+$/.test(cleaned[i + 1])) {
+        const ver = [cleaned[i], cleaned[i + 1]];
+        let j = i + 2;
+        while (j < cleaned.length && /^\d+$/.test(cleaned[j])) {
+          ver.push(cleaned[j]);
+          j++;
+        }
+        if (ver.length <= 3) {
+          merged.push(ver.join("."));
+          i = j - 1;
+          continue;
+        }
+      }
+      merged.push(cleaned[i]);
+    }
+    return merged.join(" ");
+  }
+
   function modelTitle(r) {
     const eng = engineName(r.provider);
-    const model = r.model || "-";
+    const model = formatModelDisplay(r.model || "-");
     if ((r.provider || "").toLowerCase() === "fallback") return eng;
     return `${eng} · ${model}`;
   }
@@ -95,7 +120,7 @@
 
   function fillModelCard(prefix, run) {
     setText(prefix + "Engine", engineName(run.provider));
-    setText(prefix + "Model", run.model || "-");
+    setText(prefix + "Model", formatModelDisplay(run.model || "-"));
     // 구버전 HTML(labelA/labelB) 호환
     setText("label" + prefix.toUpperCase(), modelTitle(run));
     setText(prefix + "When", (run.created_at || "-").replace("T", " "));
