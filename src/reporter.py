@@ -55,18 +55,41 @@ def _grade_metrics(db, threshold=0.75):
     return {"counts": counts, "avg_grade": round(avg_grade, 2), "analyzed": analyzed}
 
 
+def _is_fallback_payload(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if data.get("fallback") is True:
+        return True
+    return "규칙 기반" in str(data.get("summary") or "")
+
+
 def _top_keywords(db, top_n=5):
-    """가장 최근 extract 결과가 있으면 그것을 사용하고, 없으면 즉석에서 간단 집계한다."""
-    latest = db.get_latest_extraction("keyword_summary")
-    if latest:
-        data = json.loads(latest["result_json"])
+    """성공한 AI 추출을 우선 쓰고, 그게 없을 때만 규칙 기반 폴백을 보여준다."""
+    rows = db.list_extractions("keyword_summary")
+    chosen = None
+    source = "없음"
+    for row in rows:
+        try:
+            data = json.loads(row["result_json"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if not _is_fallback_payload(data):
+            chosen = data
+            source = "AI 추출 결과"
+            break
+        if chosen is None:
+            chosen = data
+            source = "규칙 기반 폴백"
+    if chosen:
         return {
-            "positive": data.get("positive_keywords", [])[:top_n],
-            "negative": data.get("negative_keywords", [])[:top_n],
-            "summary": data.get("summary", ""),
-            "suggestions": data.get("suggestions", []),
-            "topic_breakdown": data.get("topic_breakdown", []),
-            "source": "AI 추출 결과 (extract 커맨드)",
+            "positive": chosen.get("positive_keywords", [])[:top_n],
+            "negative": chosen.get("negative_keywords", [])[:top_n],
+            "summary": chosen.get("summary", ""),
+            "suggestions": chosen.get("suggestions", []),
+            "topic_breakdown": chosen.get("topic_breakdown", []),
+            "source": source,
         }
     return {"positive": [], "negative": [], "summary": "extract 커맨드를 먼저 실행하면 AI 요약이 표시됩니다.",
             "suggestions": [], "topic_breakdown": [], "source": "없음"}
@@ -384,6 +407,16 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
     font-family:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:8px;
     border:1px solid var(--navy); background:var(--navy); color:#fff; cursor:pointer;
   }}
+  .spark-key-bar button#deleteProviderKeyBtn {{
+    background:#fff; color:#C7333A; border-color:rgba(229,72,77,.45);
+  }}
+  .spark-key-bar .key-status {{
+    font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px;
+    background:rgba(155,163,180,.12); color:var(--muted); border:1px solid rgba(155,163,180,.25);
+  }}
+  .spark-key-bar .key-status.set {{
+    background:rgba(31,175,107,.1); color:#0E8A54; border-color:rgba(31,175,107,.25);
+  }}
   .spark-key-bar .hint {{ font-size:12px; color:var(--muted); }}
   .upload-bar {{
     display:flex; align-items:center; gap:12px; flex-wrap:wrap;
@@ -512,6 +545,7 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
       <select id="providerSelect">
         <option value="spark">Spark (vLLM)</option>
         <option value="openai">OpenAI</option>
+        <option value="gemini">Google Gemini</option>
         <option value="anthropic">Anthropic Claude</option>
         <option value="fallback">규칙 기반 폴백</option>
       </select>
@@ -525,8 +559,10 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
 
     <div class="spark-key-bar" id="providerKeyBar">
       <label for="providerKeyInput" id="providerKeyLabel">SPARK_API_KEY</label>
+      <span class="key-status" id="providerKeyStatus" hidden>미등록</span>
       <input type="password" id="providerKeyInput" autocomplete="off" placeholder="API 키 입력" />
       <button id="saveProviderKeyBtn" type="button">키 저장</button>
+      <button id="deleteProviderKeyBtn" type="button" hidden>키 삭제</button>
       <span class="hint" id="providerKeyHint">.env에 저장되며, 저장 전까지 해당 provider 분석은 폴백됩니다.</span>
     </div>
 
@@ -563,9 +599,9 @@ def build_html_dashboard(db, chart_paths, alert_result, output_dir, threshold=0.
         <div><h3 style="font-size:13px;margin:0 0 8px;">주요 불만·칭찬 유형</h3>{topic_html}</div>
         <div><h3 style="font-size:13px;margin:0 0 8px;">개선 제안</h3><ul class="suggestions">{suggestions_html}</ul></div>
       </div>
-      <div class="ai-note">💡 이 섹션은 `extract` 커맨드를 실행했을 때의 조건을 그대로 보여줍니다 (위 카테고리/제품
-      필터를 바꿔도 여기는 자동으로 다시 계산되지 않아요 — 특정 제품의 AI 키워드가 필요하면
-      <code>python main.py extract --product "제품명"</code>을 다시 실행하세요).</div>
+      <div class="ai-note">💡 이 섹션은 마지막으로 성공한 AI 추출 결과입니다. 재분석 때 Spark 연결이 끊기면
+      규칙 기반 폴백이 저장되어도 여기에는 이전 AI 요약을 유지합니다. 카테고리/제품 필터는 차트에만 적용되고
+      이 블록은 전체 추출 기준입니다.</div>
     </div>
 
     <footer>Customer Review Sentiment Dashboard · Generated locally from clean_reviews · Chart.js 내장(오프라인 작동)</footer>
@@ -633,6 +669,25 @@ def build_compare_html(output_dir: str) -> str:
   .status.ok {{ color:#0E8A54; }}
   .status.warn {{ color:#C7333A; }}
   .field-hint {{ font-size:12px; color:var(--navy); font-weight:600; margin-top:6px; }}
+  .snap-list {{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px 18px; margin-bottom:18px;
+  }}
+  .snap-list h2 {{ margin:0 0 10px; font-size:14px; }}
+  .snap-row {{
+    display:flex; align-items:center; gap:12px; padding:10px 0;
+    border-top:1px solid var(--border); font-size:13px;
+  }}
+  .snap-row:first-of-type {{ border-top:none; }}
+  .snap-row .snap-id {{ color:var(--muted); font-weight:700; min-width:42px; }}
+  .snap-row .snap-title {{ flex:1; font-weight:650; }}
+  .snap-row .snap-meta {{ color:var(--muted); font-size:12px; }}
+  .snap-row button.delete-snap {{
+    border:1px solid #E56B6F; background:#fff; color:#C7333A;
+    padding:6px 12px; font-size:12px;
+  }}
+  .snap-row button.delete-snap:hover {{ background:rgba(229,107,111,.08); }}
+  .snap-empty {{ color:var(--muted); font-size:13px; padding:8px 0; }}
   .model-cards {{
     display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px;
   }}
@@ -705,6 +760,11 @@ def build_compare_html(output_dir: str) -> str:
       </div>
       <button id="compareBtn" type="button">비교하기</button>
       <span class="status" id="compareStatus">불러오는 중…</span>
+    </div>
+
+    <div class="snap-list" id="snapListPanel">
+      <h2>스냅샷 목록</h2>
+      <div id="snapList"></div>
     </div>
 
     <div id="emptyState">

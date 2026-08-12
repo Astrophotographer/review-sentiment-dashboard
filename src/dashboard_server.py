@@ -28,6 +28,7 @@ from .model_display import resolve_snapshot_model
 PROVIDER_OPTIONS = [
     {"id": "spark", "label": "Spark (vLLM)", "needs_model": True},
     {"id": "openai", "label": "OpenAI", "needs_model": True},
+    {"id": "gemini", "label": "Google Gemini", "needs_model": True},
     {"id": "anthropic", "label": "Anthropic Claude", "needs_model": True},
     {"id": "fallback", "label": "규칙 기반 폴백", "needs_model": False},
 ]
@@ -35,8 +36,50 @@ PROVIDER_OPTIONS = [
 PROVIDER_KEY_ENV = {
     "spark": ("spark_api_key_env", "SPARK_API_KEY"),
     "openai": ("openai_api_key_env", "OPENAI_API_KEY"),
+    "gemini": ("gemini_api_key_env", "GEMINI_API_KEY"),
     "anthropic": ("api_key_env", "ANTHROPIC_API_KEY"),
 }
+
+# Spark 는 대시보드에서 키 삭제/수정 바를 열지 않음 (없을 때만 입력)
+EDITABLE_KEY_PROVIDERS = {"openai", "gemini", "anthropic"}
+
+DEFAULT_MODELS = {
+    "spark": "qwen",
+    "openai": "gpt-4o-mini",
+    "gemini": "gemini-2.0-flash",
+    "anthropic": "claude-sonnet-5",
+    "fallback": "규칙 기반",
+}
+
+
+def model_fits_provider(provider: str, model: Optional[str]) -> bool:
+    """다른 엔진의 모델 id가 섞여 저장되지 않게 한다."""
+    m = (model or "").strip().lower()
+    p = (provider or "").strip().lower()
+    if not m:
+        return False
+    if p == "fallback":
+        return m in ("규칙 기반", "fallback", "rule")
+    if p == "anthropic":
+        return m.startswith("claude")
+    if p == "openai":
+        return m.startswith("gpt-") or m.startswith(("o1", "o3", "o4", "chatgpt"))
+    if p == "gemini":
+        return "gemini" in m
+    if p == "spark":
+        if m.startswith(("claude", "gpt-", "o1", "o3", "o4", "chatgpt")) or "gemini" in m:
+            return False
+        return True
+    return True
+
+
+def resolve_provider_model(provider: str, model: Optional[str], last_models: Optional[dict] = None) -> str:
+    if model_fits_provider(provider, model):
+        return (model or "").strip()
+    remembered = (last_models or {}).get(provider)
+    if model_fits_provider(provider, remembered):
+        return remembered
+    return DEFAULT_MODELS.get(provider, "qwen")
 
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024  # 20MB
 UPLOAD_ALLOWED_EXT = {".csv", ".xlsx", ".xls"}
@@ -86,9 +129,8 @@ def _anthropic_models(config: dict) -> list:
     models = []
     for key in ("sentiment_model", "extract_model"):
         m = ai.get(key)
-        if m and m not in models:
+        if m and model_fits_provider("anthropic", m) and m not in models:
             models.append(m)
-    # 자주 쓰는 후보도 선택지에 노출
     for m in ("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-sonnet-4-20250514"):
         if m not in models:
             models.append(m)
@@ -108,6 +150,20 @@ def _openai_models(config: dict, logger) -> list:
     return client.list_remote_models()
 
 
+def _gemini_models(config: dict, logger) -> list:
+    client = AIClient(config, logger)
+    client.provider = "gemini"
+    client.available = True
+    client.gemini_base_url = (
+        config.get("ai", {}).get("gemini_base_url")
+        or "https://generativelanguage.googleapis.com/v1beta"
+    ).rstrip("/")
+    client.gemini_api_key = os.environ.get(
+        config.get("ai", {}).get("gemini_api_key_env", "GEMINI_API_KEY"), ""
+    ).strip()
+    return client.list_remote_models()
+
+
 def _spark_models(config: dict, logger) -> list:
     client = AIClient(config, logger)
     # 목록 조회를 위해 잠깐 provider 를 spark 로 맞춘다
@@ -121,6 +177,15 @@ def build_status(config_path: str, logger) -> dict:
     config = _read_config(config_path)
     ai = config.get("ai", {})
     provider = (ai.get("provider") or "anthropic").lower()
+    model_id = ai.get("sentiment_model")
+    if provider != "fallback" and not model_fits_provider(provider, model_id):
+        model_id = resolve_provider_model(provider, None, ai.get("last_models") or {})
+        ai["sentiment_model"] = model_id
+        ai["extract_model"] = model_id
+        last = ai.setdefault("last_models", {})
+        last[provider] = model_id
+        _write_config(config_path, config)
+
     models = []
     spark = None
     if provider == "spark":
@@ -129,10 +194,18 @@ def build_status(config_path: str, logger) -> dict:
         spark = spark_client.spark_device_status()
     elif provider == "openai":
         models = _openai_models(config, logger)
+    elif provider == "gemini":
+        models = _gemini_models(config, logger)
     elif provider == "anthropic":
         models = _anthropic_models(config)
     else:
         models = ["규칙 기반"]
+
+    models = [m for m in models if model_fits_provider(provider, m)]
+    if model_id and model_id not in models and model_fits_provider(provider, model_id):
+        models.insert(0, model_id)
+    if not models:
+        models = [DEFAULT_MODELS.get(provider, "qwen")]
 
     # Spark 미선택이어도 온도 위젯용으로 도달 여부만 확인 (선택 시 UI에서 강조)
     if spark is None:
@@ -150,7 +223,7 @@ def build_status(config_path: str, logger) -> dict:
     anthropic_env = ai.get("api_key_env", "ANTHROPIC_API_KEY")
     spark_env = ai.get("spark_api_key_env", "SPARK_API_KEY")
     openai_env = ai.get("openai_api_key_env", "OPENAI_API_KEY")
-    model_id = ai.get("sentiment_model")
+    gemini_env = ai.get("gemini_api_key_env", "GEMINI_API_KEY")
     display = resolve_snapshot_model(provider, model_id or "", spark if provider == "spark" else None)
 
     return {
@@ -163,6 +236,8 @@ def build_status(config_path: str, logger) -> dict:
         "anthropic_key_set": bool(os.environ.get(anthropic_env, "").strip()),
         "spark_key_set": bool(os.environ.get(spark_env, "").strip()),
         "openai_key_set": bool(os.environ.get(openai_env, "").strip()),
+        "gemini_key_set": bool(os.environ.get(gemini_env, "").strip()),
+        "editable_key_providers": sorted(EDITABLE_KEY_PROVIDERS),
         "spark": spark,
         "spark_tunnel_ok": tunnel_ok,
         "base_url": ai.get("base_url"),
@@ -173,38 +248,40 @@ def apply_provider_config(config_path: str, provider: str, model: Optional[str],
     config = _read_config(config_path)
     ai = config.setdefault("ai", {})
     provider = (provider or "").strip().lower()
-    if provider not in ("spark", "openai", "anthropic", "fallback"):
+    if provider not in ("spark", "openai", "gemini", "anthropic", "fallback"):
         raise ValueError(f"지원하지 않는 provider: {provider}")
 
+    last_models = ai.setdefault("last_models", {})
+    prev_provider = (ai.get("provider") or "").strip().lower()
+    prev_model = ai.get("sentiment_model")
+    if prev_provider and model_fits_provider(prev_provider, prev_model):
+        last_models[prev_provider] = prev_model
+
+    resolved = resolve_provider_model(provider, model, last_models)
     ai["provider"] = provider
     if provider == "spark":
         ai.setdefault("base_url", "http://127.0.0.1:8000/v1")
         ai.setdefault("spark_health_url", "http://100.114.218.1:8080/health")
         ai["enable_thinking"] = False
         ai.setdefault("request_timeout_sec", 90)
-        if model:
-            ai["sentiment_model"] = model
-            ai["extract_model"] = model
-        else:
-            ai.setdefault("sentiment_model", "qwen")
-            ai.setdefault("extract_model", "qwen")
+        ai["sentiment_model"] = resolved
+        ai["extract_model"] = resolved
     elif provider == "openai":
         ai.setdefault("openai_base_url", "https://api.openai.com/v1")
         ai.setdefault("openai_api_key_env", "OPENAI_API_KEY")
         ai.setdefault("request_timeout_sec", 60)
-        if model:
-            ai["sentiment_model"] = model
-            ai["extract_model"] = model
-        else:
-            ai.setdefault("sentiment_model", "gpt-4o-mini")
-            ai.setdefault("extract_model", "gpt-4o-mini")
+        ai["sentiment_model"] = resolved
+        ai["extract_model"] = resolved
+    elif provider == "gemini":
+        ai.setdefault("gemini_base_url", "https://generativelanguage.googleapis.com/v1beta")
+        ai.setdefault("gemini_api_key_env", "GEMINI_API_KEY")
+        ai.setdefault("request_timeout_sec", 60)
+        ai["sentiment_model"] = resolved
+        ai["extract_model"] = resolved
     elif provider == "anthropic":
-        if model:
-            ai["sentiment_model"] = model
-            ai["extract_model"] = model
-    else:
-        # fallback
-        pass
+        ai["sentiment_model"] = resolved
+        ai["extract_model"] = resolved
+    last_models[provider] = ai.get("sentiment_model")
 
     _write_config(config_path, config)
     logger.info(f"AI provider 설정 저장: provider={provider}, model={ai.get('sentiment_model')}")
@@ -229,6 +306,23 @@ def save_provider_api_key(config_path: str, provider: str, key: str, logger) -> 
     envfile.ensure_gitignored(env_path)
     os.environ[env_name] = key
     logger.info(f"{env_name} 을 .env 에 저장했습니다 (provider={provider}).")
+    return build_status(config_path, logger)
+
+
+def delete_provider_api_key(config_path: str, provider: str, logger) -> dict:
+    """OpenAI/Anthropic/Gemini 키를 .env·프로세스에서 제거한다. Spark는 지원하지 않는다."""
+    provider = (provider or "").strip().lower()
+    if provider == "spark":
+        raise ValueError("Spark API 키는 대시보드에서 삭제할 수 없습니다.")
+    if provider not in EDITABLE_KEY_PROVIDERS:
+        raise ValueError(f"키를 삭제할 수 없는 provider: {provider}")
+    config = _read_config(config_path)
+    cfg_key, default_env = PROVIDER_KEY_ENV[provider]
+    env_name = config.get("ai", {}).get(cfg_key, default_env)
+    env_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), ".env")
+    envfile.remove_dotenv_keys(env_path, [env_name])
+    os.environ.pop(env_name, None)
+    logger.info(f"{env_name} 을 .env 에서 삭제했습니다 (provider={provider}).")
     return build_status(config_path, logger)
 
 
@@ -504,6 +598,31 @@ def make_handler(
                 self.path = "/dashboard.html"
             return super().do_GET()
 
+        def do_DELETE(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/runs":
+                try:
+                    qs = parse_qs(parsed.query)
+                    run_id = int((qs.get("id") or [""])[0])
+                    config = _read_config(config_path)
+                    db = Database(config["storage"]["db_path"])
+                    try:
+                        ok = db.delete_model_run(run_id)
+                        runs = db.list_model_runs()
+                    finally:
+                        db.close()
+                    if not ok:
+                        self._send_json(404, {"error": "없는 스냅샷입니다.", "runs": runs})
+                        return
+                    logger.info(f"모델 스냅샷 삭제: id={run_id}")
+                    self._send_json(200, {"ok": True, "deleted": run_id, "runs": runs})
+                except ValueError:
+                    self._send_json(400, {"error": "스냅샷 id가 필요합니다."})
+                except Exception as e:  # noqa: BLE001
+                    self._send_json(500, {"error": str(e)})
+                return
+            self._send_json(404, {"error": "not found"})
+
         def do_POST(self):
             parsed = urlparse(self.path)
             if parsed.path == "/api/config":
@@ -522,12 +641,19 @@ def make_handler(
             if parsed.path == "/api/provider-key":
                 try:
                     data = self._read_json()
-                    status = save_provider_api_key(
-                        config_path,
-                        data.get("provider") or "",
-                        data.get("key") or "",
-                        logger,
-                    )
+                    if data.get("delete") or data.get("action") == "delete":
+                        status = delete_provider_api_key(
+                            config_path,
+                            data.get("provider") or "",
+                            logger,
+                        )
+                    else:
+                        status = save_provider_api_key(
+                            config_path,
+                            data.get("provider") or "",
+                            data.get("key") or "",
+                            logger,
+                        )
                     self._send_json(200, {"ok": True, **status})
                 except Exception as e:  # noqa: BLE001
                     self._send_json(400, {"error": str(e)})

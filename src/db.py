@@ -352,6 +352,18 @@ class Database:
             cur = self.conn.execute("SELECT * FROM extractions ORDER BY id DESC LIMIT 1")
         return cur.fetchone()
 
+    def list_extractions(self, extraction_type: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        if extraction_type:
+            rows = self.conn.execute(
+                "SELECT * FROM extractions WHERE extraction_type=? ORDER BY id DESC LIMIT ?",
+                (extraction_type, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM extractions ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # ---------------- model_runs (채점 스냅샷) ----------------
     def count_model_runs(self) -> int:
         return self.conn.execute("SELECT COUNT(*) c FROM model_runs").fetchone()["c"]
@@ -403,6 +415,15 @@ class Database:
     def get_model_run(self, run_id: int) -> Optional[Dict[str, Any]]:
         row = self.conn.execute("SELECT * FROM model_runs WHERE id=?", (run_id,)).fetchone()
         return dict(row) if row else None
+
+    def delete_model_run(self, run_id: int) -> bool:
+        """스냅샷과 채점 결과를 함께 지운다. 없으면 False."""
+        if self.get_model_run(run_id) is None:
+            return False
+        self.conn.execute("DELETE FROM model_run_results WHERE run_id=?", (run_id,))
+        self.conn.execute("DELETE FROM model_runs WHERE id=?", (run_id,))
+        self.conn.commit()
+        return True
 
     def compare_model_runs(self, run_a: int, run_b: int, disagreement_limit: int = 50) -> Dict[str, Any]:
         meta_a = self.get_model_run(run_a)

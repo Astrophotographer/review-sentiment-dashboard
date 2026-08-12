@@ -4,6 +4,7 @@ AI API 클라이언트 모듈
 지원 provider:
   - anthropic : Anthropic Claude 공식 REST API
   - openai    : OpenAI 공식 API (OpenAI 호환 /v1/chat/completions)
+  - gemini    : Google Gemini (Generative Language API)
   - spark     : DGX Spark vLLM (OpenAI 호환 /v1/chat/completions)
   - fallback  : 규칙 기반만 사용 (API 호출 없음)
 
@@ -23,10 +24,49 @@ from .aspects import ASPECT_IDS, infer_aspects_from_text, normalize_aspects
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
+GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_DEFAULT_MODELS = (
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+)
 
+
+def model_id_fits_provider(provider: str, model: Optional[str]) -> bool:
+    m = (model or "").strip().lower()
+    p = (provider or "").strip().lower()
+    if not m:
+        return False
+    if p == "anthropic":
+        return m.startswith("claude")
+    if p == "openai":
+        return m.startswith("gpt-") or m.startswith(("o1", "o3", "o4", "chatgpt"))
+    if p == "gemini":
+        return "gemini" in m
+    if p == "spark":
+        if m.startswith(("claude", "gpt-", "o1", "o3", "o4", "chatgpt")) or "gemini" in m:
+            return False
+        return True
+    return True
 POSITIVE_HINTS = ["좋", "만족", "빠르", "편해", "훌륭", "추천", "예뻐", "친절", "가성비", "great", "good", "happy", "love"]
 NEGATIVE_HINTS = ["불량", "늦", "실망", "안돼", "안됨", "불편", "느리", "나빠", "최악", "환불", "반품",
                   "disappoint", "defective", "bad", "slow", "broken"]
+HINT_LABELS = {
+    "좋": "좋아요",
+    "늦": "지연",
+    "빠르": "빠른 배송",
+    "편해": "편리함",
+    "disappoint": "실망",
+    "defective": "불량",
+    "bad": "나쁨",
+    "slow": "느림",
+    "broken": "고장",
+    "great": "훌륭함",
+    "good": "좋음",
+    "happy": "만족",
+    "love": "추천",
+}
 
 
 class AIClient:
@@ -40,6 +80,8 @@ class AIClient:
         self.spark_api_key = os.environ.get(self.spark_api_key_env, "").strip()
         self.openai_api_key_env = ai_cfg.get("openai_api_key_env", "OPENAI_API_KEY")
         self.openai_api_key = os.environ.get(self.openai_api_key_env, "").strip()
+        self.gemini_api_key_env = ai_cfg.get("gemini_api_key_env", "GEMINI_API_KEY")
+        self.gemini_api_key = os.environ.get(self.gemini_api_key_env, "").strip()
         self.sentiment_model = ai_cfg.get("sentiment_model", "claude-haiku-4-5-20251001")
         self.extract_model = ai_cfg.get("extract_model", "claude-sonnet-5")
         self.max_tokens = ai_cfg.get("max_tokens", 1024)
@@ -51,6 +93,7 @@ class AIClient:
         self.extract_timeout = ai_cfg.get("extract_timeout_sec", max(self.timeout * 3, 120))
         self.base_url = (ai_cfg.get("base_url") or "http://127.0.0.1:8000/v1").rstrip("/")
         self.openai_base_url = (ai_cfg.get("openai_base_url") or OPENAI_DEFAULT_BASE).rstrip("/")
+        self.gemini_base_url = (ai_cfg.get("gemini_base_url") or GEMINI_DEFAULT_BASE).rstrip("/")
         self.enable_thinking = bool(ai_cfg.get("enable_thinking", False))
         self.spark_health_url = ai_cfg.get("spark_health_url", "http://100.114.218.1:8080/health")
 
@@ -84,6 +127,19 @@ class AIClient:
                     f"AI provider=openai base_url={self.openai_base_url} "
                     f"model={self.sentiment_model}"
                 )
+        elif self.provider == "gemini":
+            self.available = bool(self.gemini_api_key)
+            if not self.available:
+                self.logger.warning(
+                    f"{self.gemini_api_key_env} 환경변수가 설정되지 않았습니다. "
+                    "Gemini 호출 대신 규칙 기반 폴백 분석기를 사용합니다. "
+                    f"Gemini를 쓰려면 .env 에 {self.gemini_api_key_env}=... 를 넣으세요."
+                )
+            else:
+                self.logger.info(
+                    f"AI provider=gemini base_url={self.gemini_base_url} "
+                    f"model={self.sentiment_model}"
+                )
         else:
             self.provider = "anthropic"
             self.available = bool(self.api_key)
@@ -92,7 +148,7 @@ class AIClient:
                     f"{self.api_key_env} 환경변수가 설정되지 않았습니다. "
                     "실제 AI 호출 대신 규칙 기반 폴백 분석기를 사용합니다. "
                     f"실제 AI 분석을 사용하려면: export {self.api_key_env}=sk-ant-xxxx "
-                    "또는 config.json 에서 provider 를 spark / openai / fallback 으로 바꾸세요."
+                    "또는 config.json 에서 provider 를 spark / openai / gemini / fallback 으로 바꾸세요."
                 )
 
     def _openai_compat_base_and_key(self):
@@ -108,6 +164,8 @@ class AIClient:
             return None
         if self.provider in ("spark", "openai"):
             return self._call_openai(model, system, user_prompt, max_tokens=max_tokens, timeout=timeout)
+        if self.provider == "gemini":
+            return self._call_gemini(model, system, user_prompt, max_tokens=max_tokens, timeout=timeout)
         return self._call_claude(model, system, user_prompt, max_tokens=max_tokens, timeout=timeout)
 
     def _call_claude(self, model: str, system: str, user_prompt: str,
@@ -149,6 +207,58 @@ class AIClient:
             return None
         except requests.RequestException as e:
             self.logger.error(f"AI API 요청 중 네트워크 오류: {e}")
+            return None
+
+    def _call_gemini(self, model: str, system: str, user_prompt: str,
+                      max_tokens: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
+        """Google Generative Language generateContent."""
+        key = self.gemini_api_key or os.environ.get(self.gemini_api_key_env, "").strip()
+        if not key:
+            self.logger.error(f"Gemini 호출에 {self.gemini_api_key_env} 가 필요합니다.")
+            return None
+        used_max = max_tokens or self.max_tokens
+        used_timeout = timeout or self.timeout
+        model_id = (model or "").strip()
+        if model_id.startswith("models/"):
+            model_id = model_id[len("models/"):]
+        url = f"{self.gemini_base_url}/models/{model_id}:generateContent"
+        payload = {
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": used_max,
+            },
+        }
+        try:
+            resp = requests.post(
+                url,
+                params={"key": key},
+                headers={"content-type": "application/json"},
+                json=payload,
+                timeout=used_timeout,
+            )
+            if resp.status_code != 200:
+                self.logger.error(
+                    f"Gemini API 호출 실패 (status={resp.status_code}): {resp.text[:200]}"
+                )
+                return None
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                self.logger.error(f"Gemini 응답에 candidates 가 없습니다: {str(data)[:200]}")
+                return None
+            parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
+            texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]
+            text = "\n".join(texts).strip()
+            return text or None
+        except requests.exceptions.Timeout:
+            self.logger.error(
+                f"Gemini API 요청이 {used_timeout}초 안에 끝나지 않아 타임아웃되었습니다."
+            )
+            return None
+        except requests.RequestException as e:
+            self.logger.error(f"Gemini API 요청 중 네트워크 오류: {e}")
             return None
 
     def _call_openai(self, model: str, system: str, user_prompt: str,
@@ -349,6 +459,9 @@ class AIClient:
         pos_sorted = sorted(pos_words.items(), key=lambda x: -x[1])[:5]
         neg_sorted = sorted(neg_words.items(), key=lambda x: -x[1])[:5]
 
+        def labeled(items):
+            return [{"keyword": HINT_LABELS.get(w, w), "count": c} for w, c in items]
+
         topic_map = {
             "배송": ["늦", "배송"],
             "품질": ["불량", "나빠", "최악"],
@@ -362,19 +475,22 @@ class AIClient:
                 if r.get("sentiment") == "negative" and any(h in (r.get("review_text") or "") for h in hints)
             )
             if count:
-                topic_breakdown.append({"topic": topic, "count": count, "examples": hints})
+                topic_breakdown.append({"topic": topic, "count": count, "examples": [HINT_LABELS.get(h, h) for h in hints]})
 
         return {
-            "positive_keywords": [{"keyword": w, "count": c} for w, c in pos_sorted] or [{"keyword": "데이터 부족", "count": 0}],
-            "negative_keywords": [{"keyword": w, "count": c} for w, c in neg_sorted] or [{"keyword": "데이터 부족", "count": 0}],
+            "fallback": True,
+            "positive_keywords": labeled(pos_sorted) or [{"keyword": "데이터 부족", "count": 0}],
+            "negative_keywords": labeled(neg_sorted) or [{"keyword": "데이터 부족", "count": 0}],
             "summary": f"총 {len(reviews)}건의 리뷰를 규칙 기반으로 요약했습니다. "
-                       f"(Spark/OpenAI/Anthropic provider 를 선택하면 AI 요약을 받을 수 있습니다.)",
-            "suggestions": ["대시보드에서 채점 모델을 Spark(qwen) 또는 OpenAI 등으로 바꾼 뒤 재분석해 보세요."],
+                       f"(Spark/OpenAI/Gemini/Anthropic provider 를 선택하면 AI 요약을 받을 수 있습니다.)",
+            "suggestions": ["대시보드에서 채점 모델을 Spark/OpenAI/Gemini 등으로 바꾼 뒤 재분석해 보세요."],
             "topic_breakdown": topic_breakdown,
         }
 
     def list_remote_models(self) -> list:
-        """OpenAI 호환 /models 에서 사용 가능한 모델 id 목록을 가져온다."""
+        """provider 별 원격 모델 id 목록."""
+        if self.provider == "gemini":
+            return self._list_gemini_models()
         if self.provider not in ("spark", "openai"):
             return [self.sentiment_model]
         base_url, key, _env = self._openai_compat_base_and_key()
@@ -384,12 +500,56 @@ class AIClient:
         try:
             resp = requests.get(f"{base_url}/models", headers=headers or None, timeout=5)
             if resp.status_code != 200:
-                return [self.sentiment_model]
+                return self._fallback_model_list()
             data = resp.json()
-            ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
-            return ids or [self.sentiment_model]
+            ids = [
+                m.get("id")
+                for m in data.get("data", [])
+                if m.get("id") and model_id_fits_provider(self.provider, m.get("id"))
+            ]
+            return ids or self._fallback_model_list()
         except requests.RequestException:
+            return self._fallback_model_list()
+
+    def _fallback_model_list(self) -> list:
+        if model_id_fits_provider(self.provider, self.sentiment_model):
             return [self.sentiment_model]
+        defaults = {
+            "spark": "qwen",
+            "openai": "gpt-4o-mini",
+            "gemini": "gemini-2.0-flash",
+            "anthropic": "claude-sonnet-5",
+        }
+        return [defaults.get(self.provider, self.sentiment_model or "qwen")]
+
+    def _list_gemini_models(self) -> list:
+        key = self.gemini_api_key or os.environ.get(self.gemini_api_key_env, "").strip()
+        defaults = list(GEMINI_DEFAULT_MODELS)
+        if self.sentiment_model and model_id_fits_provider("gemini", self.sentiment_model) and self.sentiment_model not in defaults:
+            defaults.insert(0, self.sentiment_model)
+        if not key:
+            return defaults
+        try:
+            resp = requests.get(
+                f"{self.gemini_base_url}/models",
+                params={"key": key},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return defaults
+            data = resp.json()
+            ids = []
+            for m in data.get("models") or []:
+                name = (m.get("name") or "").strip()
+                methods = m.get("supportedGenerationMethods") or []
+                if "generateContent" not in methods:
+                    continue
+                mid = name[len("models/"):] if name.startswith("models/") else name
+                if mid and mid not in ids:
+                    ids.append(mid)
+            return ids or defaults
+        except requests.RequestException:
+            return defaults
 
     def spark_device_status(self) -> dict:
         """Spark 봇 health 엔드포인트에서 기기 온도 등을 조회한다."""

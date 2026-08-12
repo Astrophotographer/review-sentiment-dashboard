@@ -73,6 +73,28 @@ def write_dotenv(path: str, updates: dict):
         f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
 
 
+def remove_dotenv_keys(path: str, keys) -> int:
+    """.env 에서 지정한 키 줄을 제거한다. 반환값: 실제로 지운 키 개수."""
+    remove = {k for k in keys if k}
+    if not remove or not os.path.exists(path):
+        return 0
+    with open(path, encoding="utf-8") as f:
+        existing_lines = f.read().splitlines()
+    new_lines = []
+    removed = 0
+    for line in existing_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in remove:
+                removed += 1
+                continue
+        new_lines.append(line)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
+    return removed
+
+
 def ensure_gitignored(env_path: str = ".env", gitignore_path: str = ".gitignore"):
     """.env 가 실수로 git에 커밋되지 않도록 .gitignore에 등록되어 있는지 확인하고,
     없으면 자동으로 추가한다."""

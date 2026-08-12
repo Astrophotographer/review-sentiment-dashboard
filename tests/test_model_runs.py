@@ -48,6 +48,19 @@ class TestModelRunCompare(unittest.TestCase):
         self.assertEqual(cmp["disagreements"][0]["review_id"], 1)
         self.assertEqual(cmp["run_b"]["temp_c"], 55.0)
 
+    def test_delete_model_run_removes_results(self):
+        seed = self.db.seed_model_run_if_empty("fallback", "규칙 기반", "시드", now_str())
+        run_b = self.db.save_model_run("spark", "qwen", "spark/qwen", now_str(), temp_c=55.0)
+        self.assertTrue(self.db.delete_model_run(run_b))
+        self.assertIsNone(self.db.get_model_run(run_b))
+        leftover = self.db.conn.execute(
+            "SELECT COUNT(*) c FROM model_run_results WHERE run_id=?", (run_b,)
+        ).fetchone()["c"]
+        self.assertEqual(leftover, 0)
+        self.assertEqual(self.db.count_model_runs(), 1)
+        self.assertIsNotNone(self.db.get_model_run(seed))
+        self.assertFalse(self.db.delete_model_run(run_b))
+
 
 if __name__ == "__main__":
     unittest.main()

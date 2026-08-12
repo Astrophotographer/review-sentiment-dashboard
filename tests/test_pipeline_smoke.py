@@ -236,8 +236,9 @@ class TestAIFailureVsFallback(unittest.TestCase):
         result = client.extract_insights(reviews, "감정=전체")
         pos = result["positive_keywords"]
         self.assertTrue(all(isinstance(k, dict) and "keyword" in k and "count" in k for k in pos))
-        good = next(k for k in pos if k["keyword"] == "좋")
-        self.assertEqual(good["count"], 2, "'좋'이 두 리뷰에 등장했으므로 count=2 여야 한다")
+        good = next(k for k in pos if k["keyword"] in ("좋", "좋아요"))
+        self.assertEqual(good["count"], 2, "'좋/좋아요'가 두 리뷰에 등장했으므로 count=2 여야 한다")
+        self.assertTrue(result.get("fallback"))
 
     def test_extract_uses_longer_timeout_than_analyze(self):
         # extract는 리뷰를 최대 200건까지 한 프롬프트에 넣고 최대 4096 토큰까지

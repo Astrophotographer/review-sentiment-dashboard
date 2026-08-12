@@ -86,17 +86,33 @@ function barDataset(extra = {}) {
   };
 }
 
-/** 누적 막대: 스택 맨 위만 둥글게 (아래는 축에 붙게 유지 — 알약/원형 왜곡 방지) */
-function stackedBarRadius(radius = 10) {
+/** 누적 막대: 스택 바깥쪽만 둥글게 (아래/왼쪽은 축에 붙게 유지) */
+function stackedBarRadius(radius = 10, horizontal = false) {
   return (ctx) => {
     const { chart, dataIndex, datasetIndex } = ctx;
     const datasets = chart.data.datasets;
+    let first = -1;
     let last = -1;
     datasets.forEach((ds, i) => {
       const v = Number(ds.data[dataIndex]) || 0;
-      if (v > 0) last = i;
+      if (v > 0) {
+        if (first < 0) first = i;
+        last = i;
+      }
     });
-    if (last < 0 || datasetIndex !== last) return 0;
+    if (last < 0) return 0;
+    const isFirst = datasetIndex === first;
+    const isLast = datasetIndex === last;
+    if (!isFirst && !isLast) return 0;
+    if (horizontal) {
+      return {
+        topLeft: isFirst ? radius : 0,
+        bottomLeft: isFirst ? radius : 0,
+        topRight: isLast ? radius : 0,
+        bottomRight: isLast ? radius : 0,
+      };
+    }
+    if (!isLast) return 0;
     return {
       topLeft: radius,
       topRight: radius,
@@ -459,6 +475,9 @@ function renderProductBreakdown(rows) {
         label: SENT_LABEL[k],
         data: products.map((p) => byProd[p][k]),
         backgroundColor: SENT_COLORS[k],
+        hoverBackgroundColor: hexAlpha(SENT_COLORS[k], 0.85),
+        borderRadius: stackedBarRadius(10, true),
+        borderSkipped: false,
         maxBarThickness: 18,
       })),
     },

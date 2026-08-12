@@ -18,6 +18,7 @@ def run_label(provider: str, model: str) -> str:
     names = {
         "spark": "Spark",
         "openai": "OpenAI",
+        "gemini": "Gemini",
         "anthropic": "Anthropic",
         "fallback": "규칙 기반",
     }
@@ -81,6 +82,7 @@ def ensure_seed_snapshot(db, config: dict, logger) -> Optional[int]:
     names = {
         "spark": "Spark",
         "openai": "OpenAI",
+        "gemini": "Gemini",
         "anthropic": "Anthropic",
         "fallback": "규칙 기반",
     }

@@ -24,10 +24,13 @@
   const providerKeyHint = document.getElementById("providerKeyHint");
 
   const KEY_META = {
-    spark: { env: "SPARK_API_KEY", placeholder: "Spark API 키 입력", flag: "spark_key_set" },
-    openai: { env: "OPENAI_API_KEY", placeholder: "OpenAI API 키 입력", flag: "openai_key_set" },
-    anthropic: { env: "ANTHROPIC_API_KEY", placeholder: "Anthropic API 키 입력", flag: "anthropic_key_set" },
+    spark: { env: "SPARK_API_KEY", placeholder: "Spark API 키 입력", flag: "spark_key_set", editable: false },
+    openai: { env: "OPENAI_API_KEY", placeholder: "새 OpenAI API 키 입력", flag: "openai_key_set", editable: true },
+    gemini: { env: "GEMINI_API_KEY", placeholder: "새 Gemini API 키 입력", flag: "gemini_key_set", editable: true },
+    anthropic: { env: "ANTHROPIC_API_KEY", placeholder: "새 Anthropic API 키 입력", flag: "anthropic_key_set", editable: true },
   };
+  const deleteProviderKeyBtn = document.getElementById("deleteProviderKeyBtn");
+  const providerKeyStatus = document.getElementById("providerKeyStatus");
 
   function setStatus(text, kind) {
     if (!modelStatus) return;
@@ -48,14 +51,20 @@
   }
 
   function fillModels(models, selected) {
+    const provider = providerSel.value;
+    const filtered = (models || []).filter((m) => modelFitsProvider(provider, m));
+    if (!filtered.length) {
+      const fallback = defaultModelFor(provider);
+      if (fallback) filtered.push(fallback);
+    }
     modelSel.innerHTML = "";
-    (models || []).forEach((m) => {
+    filtered.forEach((m) => {
       const opt = document.createElement("option");
       opt.value = m;
       opt.textContent = m;
       modelSel.appendChild(opt);
     });
-    if (selected && [...modelSel.options].some((o) => o.value === selected)) {
+    if (selected && modelFitsProvider(provider, selected) && [...modelSel.options].some((o) => o.value === selected)) {
       modelSel.value = selected;
     }
   }
@@ -63,17 +72,70 @@
   function updateProviderKeyBar(provider, data) {
     if (!providerKeyBar) return;
     const meta = KEY_META[provider];
-    const needKey = !!meta && !keySetFor(provider, data);
+    const hasKey = !!meta && keySetFor(provider, data);
+    // Spark: 키가 없을 때만 표시. 그 외 editable provider: 선택 시 항상 표시(수정/삭제).
+    let show = false;
+    if (meta) {
+      if (provider === "spark") show = !hasKey;
+      else if (meta.editable) show = true;
+    }
     const wasHidden = !providerKeyBar.classList.contains("visible");
-    providerKeyBar.classList.toggle("visible", needKey);
+    providerKeyBar.classList.toggle("visible", show);
     if (meta) {
       if (providerKeyLabel) providerKeyLabel.textContent = meta.env;
-      if (providerKeyInput) providerKeyInput.placeholder = meta.placeholder;
+      if (providerKeyInput) {
+        providerKeyInput.placeholder = hasKey && meta.editable
+          ? `등록됨 — 새 ${meta.env} 로 교체`
+          : meta.placeholder;
+      }
       if (providerKeyHint) {
-        providerKeyHint.textContent = `.env에 저장되며, 저장 전까지 ${meta.env} 분석은 폴백됩니다.`;
+        if (provider === "spark") {
+          providerKeyHint.textContent = `.env에 저장되며, 저장 전까지 ${meta.env} 분석은 폴백됩니다.`;
+        } else if (hasKey) {
+          providerKeyHint.textContent = `등록됨 · 새 키를 넣고 저장하면 교체됩니다.`;
+        } else {
+          providerKeyHint.textContent = `.env에 저장되며, 저장 전까지 ${meta.env} 분석은 폴백됩니다.`;
+        }
+      }
+      if (providerKeyStatus) {
+        providerKeyStatus.textContent = hasKey ? "등록됨" : "미등록";
+        providerKeyStatus.className = "key-status" + (hasKey ? " set" : "");
+        providerKeyStatus.hidden = provider === "spark";
+      }
+      if (deleteProviderKeyBtn) {
+        const canDelete = meta.editable && hasKey;
+        deleteProviderKeyBtn.hidden = !canDelete;
+        deleteProviderKeyBtn.disabled = !canDelete;
+      }
+      if (saveProviderKeyBtn) {
+        saveProviderKeyBtn.textContent = hasKey && meta.editable ? "키 수정" : "키 저장";
       }
     }
-    if (needKey && wasHidden && providerKeyInput) providerKeyInput.focus();
+    if (show && wasHidden && providerKeyInput && !hasKey) providerKeyInput.focus();
+  }
+
+  function modelFitsProvider(provider, model) {
+    const m = String(model || "").trim().toLowerCase();
+    if (!m) return false;
+    if (provider === "fallback") return m === "규칙 기반";
+    if (provider === "anthropic") return m.startsWith("claude");
+    if (provider === "openai") return m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4") || m.startsWith("chatgpt");
+    if (provider === "gemini") return m.includes("gemini");
+    if (provider === "spark") {
+      if (m.startsWith("claude") || m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4") || m.startsWith("chatgpt") || m.includes("gemini")) {
+        return false;
+      }
+      return true;
+    }
+    return true;
+  }
+
+  function defaultModelFor(provider) {
+    if (provider === "spark") return "qwen";
+    if (provider === "openai") return "gpt-4o-mini";
+    if (provider === "gemini") return "gemini-2.0-flash";
+    if (provider === "anthropic") return "claude-sonnet-5";
+    return null;
   }
 
   function readTempC(spark) {
@@ -118,12 +180,6 @@
       sparkTemp.className = "spark-temp offline";
       if (spark && spark.error) sparkTemp.title = spark.error;
     }
-  }
-
-  function defaultModelFor(provider) {
-    if (provider === "spark") return "qwen";
-    if (provider === "openai") return "gpt-4o-mini";
-    return null;
   }
 
   function applyStatus(data) {
@@ -194,7 +250,8 @@
       return;
     }
     const fallback = defaultModelFor(providerSel.value);
-    const model = modelSel.value === "규칙 기반" ? fallback : modelSel.value;
+    const current = modelSel.value;
+    const model = modelFitsProvider(providerSel.value, current) ? current : fallback;
     setStatus("모델 목록 불러오는 중…");
     try {
       await postConfig(providerSel.value, model);
@@ -240,7 +297,8 @@
     }
     try {
       saveProviderKeyBtn.disabled = true;
-      setStatus("키 저장 중…", "busy");
+      if (deleteProviderKeyBtn) deleteProviderKeyBtn.disabled = true;
+      setStatus(keySetFor(provider, lastStatus) ? "키 수정 중…" : "키 저장 중…", "busy");
       const res = await fetch("/api/provider-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -259,6 +317,41 @@
       setStatus(String(e.message || e), "warn");
     } finally {
       saveProviderKeyBtn.disabled = false;
+      updateProviderKeyBar(providerSel.value, lastStatus);
+    }
+  });
+
+  deleteProviderKeyBtn && deleteProviderKeyBtn.addEventListener("click", async () => {
+    const provider = providerSel.value;
+    const meta = KEY_META[provider];
+    if (!meta || !meta.editable) {
+      setStatus("이 엔진의 키는 삭제할 수 없습니다.", "warn");
+      return;
+    }
+    if (!keySetFor(provider, lastStatus)) {
+      setStatus("삭제할 등록 키가 없습니다.", "warn");
+      return;
+    }
+    if (!confirm(`${meta.env} 를 .env에서 삭제할까요?`)) return;
+    try {
+      deleteProviderKeyBtn.disabled = true;
+      saveProviderKeyBtn && (saveProviderKeyBtn.disabled = true);
+      setStatus("키 삭제 중…", "busy");
+      const res = await fetch("/api/provider-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, delete: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "키 삭제 실패");
+      if (providerKeyInput) providerKeyInput.value = "";
+      applyStatus(data);
+      setStatus(`${meta.env} 를 삭제했습니다.`, "ok");
+    } catch (e) {
+      setStatus(String(e.message || e), "warn");
+    } finally {
+      saveProviderKeyBtn && (saveProviderKeyBtn.disabled = false);
+      updateProviderKeyBar(providerSel.value, lastStatus);
     }
   });
 

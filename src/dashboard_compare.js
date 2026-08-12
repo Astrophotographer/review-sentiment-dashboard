@@ -6,12 +6,14 @@
   const statusEl = document.getElementById("compareStatus");
   const emptyEl = document.getElementById("emptyState");
   const resultEl = document.getElementById("resultPanel");
+  const snapListEl = document.getElementById("snapList");
+  const snapListPanel = document.getElementById("snapListPanel");
   const tableBody = document.querySelector("#disagreeTable tbody");
   let chart;
   let runsById = {};
 
   const SENT = { positive: "긍정", neutral: "중립", negative: "부정", null: "미분석" };
-  const ENGINE = { spark: "Spark", openai: "OpenAI", anthropic: "Anthropic", fallback: "규칙 기반" };
+  const ENGINE = { spark: "Spark", openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic", fallback: "규칙 기반" };
 
   function setStatus(msg, kind) {
     if (!statusEl) return;
@@ -80,6 +82,7 @@
       emptyEl.style.display = "block";
       resultEl.style.display = "none";
       compareBtn.disabled = true;
+      renderSnapList(runs);
       setStatus("저장된 스냅샷이 없습니다. 대시보드에서 재분석을 먼저 실행하세요.", "warn");
       return runs;
     }
@@ -105,8 +108,49 @@
       runB.value = String(runs[1].id);
       setStatus(`${runs.length}개 스냅샷 · 드롭다운에서 채점 모델 확인`);
     }
+    renderSnapList(runs);
     updateSelectedHints();
     return runs;
+  }
+
+  function renderSnapList(runs) {
+    if (!snapListEl) return;
+    if (snapListPanel) snapListPanel.style.display = runs.length ? "" : "none";
+    if (!runs.length) {
+      snapListEl.innerHTML = "";
+      return;
+    }
+    snapListEl.innerHTML = "";
+    runs.forEach((r) => {
+      const row = document.createElement("div");
+      row.className = "snap-row";
+      const when = (r.created_at || "").replace("T", " ").slice(0, 19);
+      const temp = r.temp_c != null ? ` · GPU ${r.temp_c}°C` : "";
+      row.innerHTML = `
+        <span class="snap-id">#${r.id}</span>
+        <span class="snap-title">${modelTitle(r)}</span>
+        <span class="snap-meta">${when}${temp}</span>
+        <button type="button" class="delete-snap" data-id="${r.id}">삭제</button>`;
+      snapListEl.appendChild(row);
+    });
+  }
+
+  async function deleteRun(runId) {
+    const run = runsById[runId];
+    const label = run ? `#${runId} ${modelTitle(run)}` : `#${runId}`;
+    if (!confirm(`스냅샷 ${label} 을(를) 삭제할까요?\n비교 목록에서 사라지고, 되돌릴 수 없습니다.`)) return;
+    setStatus("스냅샷 삭제 중…");
+    try {
+      const res = await fetch(`/api/runs?id=${encodeURIComponent(runId)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "삭제 실패");
+      resultEl.style.display = "none";
+      const runs = await loadRuns();
+      setStatus(`스냅샷 #${runId} 삭제됨 · ${runs.length}개 남음`, "ok");
+      if (runs && runs.length >= 2) runCompare();
+    } catch (e) {
+      setStatus(String(e.message || e), "warn");
+    }
   }
 
   function updateSelectedHints() {
@@ -262,6 +306,14 @@
   }
 
   compareBtn.addEventListener("click", runCompare);
+  if (snapListEl) {
+    snapListEl.addEventListener("click", (e) => {
+      const btn = e.target.closest("button.delete-snap");
+      if (!btn) return;
+      const id = Number(btn.getAttribute("data-id"));
+      if (Number.isFinite(id)) deleteRun(id);
+    });
+  }
   runA.addEventListener("change", () => {
     updateSelectedHints();
     if (runA.value === runB.value) setStatus("서로 다른 스냅샷을 선택하세요.", "warn");
